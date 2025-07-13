@@ -89,6 +89,7 @@ if uploaded_files:
     st.success("✅ Files uploaded and saved.")
 
 
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 embed_model = HuggingFaceEmbedding(
     model_name="BAAI/bge-base-en",
