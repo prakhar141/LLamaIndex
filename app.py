@@ -28,11 +28,22 @@ except Exception as e:
 # ============================== Gemini LLM Setup ==============================
 class GeminiLLM:
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model)
+        self.api_key = api_key
+        self.model_name = model
+        self.model = None  # lazy initialization
+
+    def _setup(self):
+        if self.model is None:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
 
     def complete(self, prompt: str) -> str:
-        response = self.model.generate_content(prompt)
+        try:
+            self._setup()
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return f"❌ Gemini Error: {str(e)}"
         return response.text
 
 # ============================== Embedding Model ==============================
