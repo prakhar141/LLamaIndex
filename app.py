@@ -1,4 +1,9 @@
 import os
+os.environ["NLTK_DATA"] = os.path.join(os.getcwd(), "nltk_data")
+import nltk
+nltk.download("punkt", download_dir=os.environ["NLTK_DATA"])
+
+import os
 import time
 import logging
 import streamlit as st
