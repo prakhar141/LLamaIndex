@@ -41,8 +41,8 @@ def load_pdf_chunks(file_path):
 
 
 # =================== Streamlit UI ===================
-st.set_page_config(page_title="📚 Gemini PDF Chatbot", page_icon="🧠")
-st.title("📚 Chat with your PDFs using Gemini + LangChain")
+st.set_page_config(page_title="📚 PDF Chatbot", page_icon="🧠")
+st.title("📚 Chat with your PDFs")
 
 uploaded_file = st.file_uploader("📂 Upload a PDF file", type=["pdf"])
 query = st.text_input("💬 Ask a question from your PDF:")
@@ -58,7 +58,7 @@ if uploaded_file:
         chunks = load_pdf_chunks(file_path)
 
     # Embedding & Index
-    with st.spinner("🔎 Creating vector index..."):
+    with st.spinner("🔎 Reading..."):
         embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
         vectordb = FAISS.from_documents(chunks, embeddings)
         retriever = vectordb.as_retriever(search_type="similarity", k=3)
