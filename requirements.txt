@@ -1,22 +1,22 @@
-# ---------------------- UI ----------------------
+# UI
 streamlit==1.32.2
 
-# ---------------------- Core Libraries ----------------------
-llama-index==0.10.36
+# LLM + Index
+llama-index==0.10.35
 langchain==0.1.13
 
-# ---------------------- HuggingFace / Transformers ----------------------
+# Transformers & Embeddings
 transformers==4.38.2
 torch==2.2.1
-huggingface-hub==0.21.4
-sentencepiece==0.1.99  # ⚠️ Safer than 0.2.0 for compatibility
+huggingface-hub==0.20.3
 sentence-transformers==2.2.2
+sentencepiece==0.1.99  # ✅ stable version
 
-# ---------------------- Gemini ----------------------
+# Gemini
 google-generativeai==0.4.1
 google-api-core==2.17.1
 
-# ---------------------- NLP + Utilities ----------------------
+# NLP + Utils
 pypdf==3.17.4
 numpy==1.24.3
 scikit-learn==1.4.1.post1
