@@ -17,7 +17,7 @@ login(token=st.secrets["HF_TOKEN"])
 
 from llama_index.core.readers import SimpleDirectoryReader
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
-from llama_index.llms import CustomLLM, CompletionResponse, LLMMetadata
+from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.embeddings.langchain import LangchainEmbedding
 from langchain.embeddings.huggingface import HuggingFaceBgeEmbeddings
 
