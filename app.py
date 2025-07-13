@@ -89,6 +89,15 @@ if uploaded_files:
     st.success("✅ Files uploaded and saved.")
 
 # Setup LLM and embeddings
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding  # ✅ working import
+
+embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-base-en",
+    device="cpu",
+    embed_batch_size=8,
+    normalize=True
+)
+
 llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
 embed_model = LangchainEmbedding(
     HuggingFaceBgeEmbeddings(
