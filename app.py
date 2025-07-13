@@ -17,8 +17,8 @@ class GeminiLLM(CustomLLM):
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
         super().__init__()
         genai.configure(api_key=api_key)
-        self._model_name = model
-        self._model = genai.GenerativeModel(model)
+        object.__setattr__(self, "_model_name", model)  # 🔥 Fix here
+        object.__setattr__(self, "_model", genai.GenerativeModel(model))
 
     @property
     def context_window(self) -> int:
