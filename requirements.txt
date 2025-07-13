@@ -4,3 +4,10 @@ faiss-cpu
 google-generativeai
 sentence-transformers
 PyMuPDF
+langchain
+langchain-community
+faiss-cpu
+sentence-transformers
+google-generativeai
+PyMuPDF
+streamlit
