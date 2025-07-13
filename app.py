@@ -70,7 +70,7 @@ def query_index_with_retry(engine, prompt, max_retries=5, backoff=2):
     return "⚠️ Failed after retries."
 
 # ============================== Streamlit UI ==============================
-st.set_page_config(page_title="Gemini PDF Chatbot", page_icon="📚", layout="centered")
+st.set_page_config(page_title="PDF Chatbot", page_icon="📚", layout="centered")
 st.title("📚 Gemini PDF Chatbot")
 st.markdown("Upload your PDFs or text files and ask questions from their content!")
 
