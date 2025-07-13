@@ -80,7 +80,7 @@ if uploaded_files:
     st.success("✅ Files uploaded and saved.")
 
 # Setup LLM and embeddings
-llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
+llm = GeminiLLM(api_key=st.secrets["AIzaSyAGpWp26NHoY-aWjN_5v6tPijMmEt7uU1w"])
 embed_model = LangchainEmbedding(
     HuggingFaceBgeEmbeddings(
         model_name="BAAI/bge-base-en",
