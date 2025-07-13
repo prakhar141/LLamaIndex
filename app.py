@@ -10,6 +10,7 @@ from llama_index import VectorStoreIndex, StorageContext, load_index_from_storag
 from llama_index.llms import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.embeddings.langchain import LangchainEmbedding
 from langchain.embeddings.huggingface import HuggingFaceBgeEmbeddings
+from pydantic import PrivateAttr
 
 # ============================== Gemini LLM Setup ==============================
 class GeminiLLM(CustomLLM):
