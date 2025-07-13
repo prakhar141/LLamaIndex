@@ -42,7 +42,7 @@ class HuggingFaceEmbedding:
 
 # ============================== Streamlit UI ==============================
 st.set_page_config(page_title="PDF Chatbot", page_icon="📚", layout="centered")
-st.title("📚 Gemini PDF Chatbot")
+st.title("📚 PDF Chatbot")
 st.markdown("Upload your PDFs or text files and ask questions from their content!")
 
 uploaded_files = st.file_uploader("📂 Upload PDF or TXT files", type=["pdf", "txt"], accept_multiple_files=True)
