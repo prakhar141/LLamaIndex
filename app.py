@@ -8,7 +8,10 @@ from huggingface_hub import login
 from sentence_transformers import SentenceTransformer
 import fitz  # PyMuPDF
 import nltk
+
+# Fix: Download punkt and ensure everything is cached
 nltk.download("punkt")
+nltk.download("punkt_tab")  # ✅ explicitly add this line
 from nltk.tokenize import sent_tokenize
 
 # ============================== Environment Setup ==============================
