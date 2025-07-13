@@ -4,8 +4,8 @@ import logging
 import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import TooManyRequests
+from llama_index.readers import SimpleDirectoryReader
 
-from llama_index.readers.file import SimpleDirectoryReader
 from llama_index import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
 from llama_index.llms.base import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.embeddings.langchain import LangchainEmbedding
