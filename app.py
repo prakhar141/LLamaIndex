@@ -4,6 +4,9 @@ import logging
 import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import TooManyRequests
+from huggingface_hub import login
+login(token=st.secrets["HF_TOKEN"])
+
 
 from llama_index.readers import SimpleDirectoryReader
 from llama_index import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
