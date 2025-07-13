@@ -70,7 +70,7 @@ if uploaded_file:
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
     if query:
-        with st.spinner("🤖 Thinking it..."):
+        with st.spinner("🤖 Thinking it."):
             answer = qa.run(query)
             st.success("🧠 Answer:")
             st.write(answer)
