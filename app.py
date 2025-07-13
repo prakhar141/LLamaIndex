@@ -5,20 +5,15 @@ import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import TooManyRequests
 
-from llama_index.core import (
-    SimpleDirectoryReader,
-    VectorStoreIndex,
-    ServiceContext,
-    StorageContext,
-    load_index_from_storage,
-)
-from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
-from llama_index.core.settings import Settings
+from llama_index.readers.file import SimpleDirectoryReader
+from llama_index import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
+from llama_index.llms.base import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.embeddings.langchain import LangchainEmbedding
+from llama_index.core.settings import Settings
 from langchain.embeddings.huggingface import HuggingFaceBgeEmbeddings
 
 
-# ====== Gemini LLM Setup ======
+# ============================== Gemini LLM Setup ==============================
 class GeminiLLM(CustomLLM):
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
         super().__init__()
@@ -50,7 +45,7 @@ class GeminiLLM(CustomLLM):
         raise NotImplementedError("Streaming not supported.")
 
 
-# ====== Logging & Retry Setup ======
+# ============================== Logging & Retry ==============================
 logging.basicConfig(level=logging.INFO)
 
 def query_index_with_retry(engine, prompt, max_retries=5, backoff=2):
@@ -69,51 +64,68 @@ def query_index_with_retry(engine, prompt, max_retries=5, backoff=2):
     return "⚠️ Failed after retries."
 
 
-# ====== Streamlit UI ======
+# ============================== Streamlit UI ==============================
+st.set_page_config(page_title="Gemini PDF Chatbot", page_icon="📚", layout="centered")
 st.title("📚 Gemini PDF Chatbot")
-st.markdown("Upload PDFs or Text files and ask questions!")
+st.markdown("Upload your PDFs or text files and ask questions from their content!")
 
-# File upload
-uploaded_files = st.file_uploader("Upload your files", type=["pdf", "txt"], accept_multiple_files=True)
+# Upload area
+uploaded_files = st.file_uploader("📂 Upload PDF or TXT files", type=["pdf", "txt"], accept_multiple_files=True)
 
-# Persist uploaded files
+DATA_DIR = "data"
+INDEX_DIR = "storage"
+
+# Save files if uploaded
 if uploaded_files:
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
     for file in uploaded_files:
-        file_path = os.path.join("data", file.name)
+        file_path = os.path.join(DATA_DIR, file.name)
         with open(file_path, "wb") as f:
             f.write(file.read())
-    st.success("✅ Files saved and ready for indexing.")
+    st.success("✅ Files uploaded and saved.")
 
-# Load & build index if files are present
-if os.path.exists("data") and any(os.scandir("data")):
-    # Setup Gemini LLM
-    llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
-    Settings.llm = llm
+# Setup Gemini + Embeddings
+llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
+embed_model = HuggingFaceBgeEmbeddings(
+    model_name="BAAI/bge-base-en",
+    model_kwargs={"device": "cpu"},
+    encode_kwargs={"normalize_embeddings": True}
+)
 
-    # Setup embeddings
-    lc_embed = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-base-en", model_kwargs={"device": "cpu"}, encode_kwargs={"normalize_embeddings": True})
-    Settings.embed_model = LangchainEmbedding(lc_embed)
+Settings.llm = llm
+Settings.embed_model = LangchainEmbedding(embed_model)
+Settings.chunk_size = 800
+Settings.chunk_overlap = 20
 
-    # Optional: chunk size
-    Settings.chunk_size = 800
-    Settings.chunk_overlap = 20
-
-    # Load documents and create index
-    with st.spinner("🔍 Indexing documents..."):
+# Build or load index
+if os.path.exists(DATA_DIR) and any(os.scandir(DATA_DIR)):
+    if os.path.exists(INDEX_DIR):
         try:
-            documents = SimpleDirectoryReader("data").load_data()
-            index = VectorStoreIndex.from_documents(documents)
-            index.storage_context.persist()
+            st.info("📦 Loading existing index...")
+            storage_context = StorageContext.from_defaults(persist_dir=INDEX_DIR)
+            index = load_index_from_storage(storage_context)
             query_engine = index.as_query_engine()
-            st.success("✅ Index created successfully.")
+            st.success("✅ Index loaded successfully.")
         except Exception as e:
-            st.error(f"❌ Error during indexing: {e}")
+            st.error(f"❌ Failed to load existing index: {e}")
             st.stop()
+    else:
+        with st.spinner("🔍 Indexing uploaded files..."):
+            try:
+                documents = SimpleDirectoryReader(DATA_DIR).load_data()
+                index = VectorStoreIndex.from_documents(documents)
+                index.storage_context.persist(persist_dir=INDEX_DIR)
+                query_engine = index.as_query_engine()
+                st.success("✅ New index created successfully.")
+            except Exception as e:
+                st.error(f"❌ Error while indexing: {e}")
+                st.stop()
 
-    # Ask question
-    user_question = st.text_input("💬 Ask a question from the documents:")
-    if user_question:
+    # Chat interface
+    user_input = st.text_input("💬 Ask your question from the documents:")
+    if user_input:
         with st.spinner("🤖 Thinking..."):
-            answer = query_index_with_retry(query_engine, user_question)
+            answer = query_index_with_retry(query_engine, user_input)
             st.markdown(f"**Answer:** {answer}")
+else:
+    st.info("📎 Please upload files to start chatting.")
