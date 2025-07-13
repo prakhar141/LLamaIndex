@@ -4,14 +4,12 @@ import logging
 import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import TooManyRequests
-from llama_index.readers import SimpleDirectoryReader
 
+from llama_index.readers import SimpleDirectoryReader
 from llama_index import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
 from llama_index.llms import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.embeddings.langchain import LangchainEmbedding
-from llama_index.core.settings import Settings
 from langchain.embeddings.huggingface import HuggingFaceBgeEmbeddings
-
 
 # ============================== Gemini LLM Setup ==============================
 class GeminiLLM(CustomLLM):
@@ -44,7 +42,6 @@ class GeminiLLM(CustomLLM):
     def stream_complete(self, prompt: str, **kwargs):
         raise NotImplementedError("Streaming not supported.")
 
-
 # ============================== Logging & Retry ==============================
 logging.basicConfig(level=logging.INFO)
 
@@ -63,19 +60,17 @@ def query_index_with_retry(engine, prompt, max_retries=5, backoff=2):
             break
     return "⚠️ Failed after retries."
 
-
 # ============================== Streamlit UI ==============================
 st.set_page_config(page_title="Gemini PDF Chatbot", page_icon="📚", layout="centered")
 st.title("📚 Gemini PDF Chatbot")
 st.markdown("Upload your PDFs or text files and ask questions from their content!")
 
-# Upload area
 uploaded_files = st.file_uploader("📂 Upload PDF or TXT files", type=["pdf", "txt"], accept_multiple_files=True)
 
 DATA_DIR = "data"
 INDEX_DIR = "storage"
 
-# Save files if uploaded
+# Save files
 if uploaded_files:
     os.makedirs(DATA_DIR, exist_ok=True)
     for file in uploaded_files:
@@ -84,20 +79,23 @@ if uploaded_files:
             f.write(file.read())
     st.success("✅ Files uploaded and saved.")
 
-# Setup Gemini + Embeddings
+# Setup LLM and embeddings
 llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
-embed_model = HuggingFaceBgeEmbeddings(
-    model_name="BAAI/bge-base-en",
-    model_kwargs={"device": "cpu"},
-    encode_kwargs={"normalize_embeddings": True}
+embed_model = LangchainEmbedding(
+    HuggingFaceBgeEmbeddings(
+        model_name="BAAI/bge-base-en",
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
+    )
+)
+service_context = ServiceContext.from_defaults(
+    llm=llm,
+    embed_model=embed_model,
+    chunk_size=800,
+    chunk_overlap=20,
 )
 
-Settings.llm = llm
-Settings.embed_model = LangchainEmbedding(embed_model)
-Settings.chunk_size = 800
-Settings.chunk_overlap = 20
-
-# Build or load index
+# Index logic
 if os.path.exists(DATA_DIR) and any(os.scandir(DATA_DIR)):
     if os.path.exists(INDEX_DIR):
         try:
@@ -107,25 +105,25 @@ if os.path.exists(DATA_DIR) and any(os.scandir(DATA_DIR)):
             query_engine = index.as_query_engine()
             st.success("✅ Index loaded successfully.")
         except Exception as e:
-            st.error(f"❌ Failed to load existing index: {e}")
+            st.error(f"❌ Failed to load index: {e}")
             st.stop()
     else:
         with st.spinner("🔍 Indexing uploaded files..."):
             try:
                 documents = SimpleDirectoryReader(DATA_DIR).load_data()
-                index = VectorStoreIndex.from_documents(documents)
+                index = VectorStoreIndex.from_documents(documents, service_context=service_context)
                 index.storage_context.persist(persist_dir=INDEX_DIR)
                 query_engine = index.as_query_engine()
-                st.success("✅ New index created successfully.")
+                st.success("✅ New index created.")
             except Exception as e:
-                st.error(f"❌ Error while indexing: {e}")
+                st.error(f"❌ Indexing failed: {e}")
                 st.stop()
 
-    # Chat interface
-    user_input = st.text_input("💬 Ask your question from the documents:")
+    # Ask questions
+    user_input = st.text_input("💬 Ask a question from the documents:")
     if user_input:
         with st.spinner("🤖 Thinking..."):
             answer = query_index_with_retry(query_engine, user_input)
             st.markdown(f"**Answer:** {answer}")
 else:
-    st.info("📎 Please upload files to start chatting.")
+    st.info("📎 Please upload files to start.")
