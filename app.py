@@ -5,22 +5,23 @@ import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import TooManyRequests
 from huggingface_hub import login
-login(token=st.secrets["HF_TOKEN"])
+from pydantic import PrivateAttr
 
+# Login to Hugging Face
+login(token=st.secrets["HF_TOKEN"])
 
 from llama_index.readers import SimpleDirectoryReader
 from llama_index import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
 from llama_index.llms import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.embeddings.langchain import LangchainEmbedding
 from langchain.embeddings.huggingface import HuggingFaceBgeEmbeddings
-from pydantic import PrivateAttr
 
 # ============================== Gemini LLM Setup ==============================
 class GeminiLLM(CustomLLM):
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
         super().__init__()
         genai.configure(api_key=api_key)
-        object.__setattr__(self, "_model_name", model)  # 🔥 Fix here
+        object.__setattr__(self, "_model_name", model)
         object.__setattr__(self, "_model", genai.GenerativeModel(model))
 
     @property
@@ -98,6 +99,12 @@ service_context = ServiceContext.from_defaults(
     chunk_size=800,
     chunk_overlap=20,
 )
+from llama_index.core.settings import Settings  # New import
+
+# After creating service_context
+Settings.llm = llm
+Settings.embed_model = embed_model
+
 
 # Index logic
 if os.path.exists(DATA_DIR) and any(os.scandir(DATA_DIR)):
@@ -130,4 +137,4 @@ if os.path.exists(DATA_DIR) and any(os.scandir(DATA_DIR)):
             answer = query_index_with_retry(query_engine, user_input)
             st.markdown(f"**Answer:** {answer}")
 else:
-    st.info("📎 Please upload files to start.")
+    st.info("📌 Please upload files to start.")
