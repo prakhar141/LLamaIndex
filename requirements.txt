@@ -17,4 +17,4 @@ protobuf==4.25.3
 requests==2.31.0
 tqdm==4.66.4
 PyMuPDF==1.23.9
-llama-index-embeddings-huggingface==0.1.4
+
