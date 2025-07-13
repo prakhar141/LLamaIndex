@@ -1,24 +1,32 @@
-# Core libraries
+# ────────────────────────────────
+# 🌐 Web App Interface
+# ────────────────────────────────
 streamlit==1.32.2
 
-# LlamaIndex (stable with LangchainEmbedding support)
-llama-index==0.9.48
+# ────────────────────────────────
+# 🧠 Core LLM & Indexing Libraries
+# ────────────────────────────────
+llama-index==0.9.48         # Stable version with LangchainEmbedding, ChatMessage support
+langchain==0.1.13           # Compatible with LlamaIndex 0.9.x
 
-# LangChain and embeddings
-langchain==0.1.13
+# ────────────────────────────────
+# 🤗 Transformers & Embeddings
+# ────────────────────────────────
+transformers==4.38.2
 huggingface-hub==0.21.4
 sentencepiece==0.2.0
-transformers==4.38.2
 torch==2.2.1
 
-# Google Generative AI
+# ────────────────────────────────
+# 🔮 Google Gemini LLM
+# ────────────────────────────────
 google-generativeai==0.4.1
 google-api-core==2.17.1
 
-# PDF support
-pypdf==3.17.4
-
-# Optional NLP and system helpers
-tqdm==4.66.2
-numpy==1.24.3
-scikit-learn==1.4.1.post1
+# ────────────────────────────────
+# 📄 File Parsing & Utilities
+# ────────────────────────────────
+pypdf==3.17.4               # For reading PDFs
+tqdm==4.66.2                # Progress bars for processing
+numpy==1.24.3               # For numerical ops
+scikit-learn==1.4.1.post1   # For vector math / optional ML utils
