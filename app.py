@@ -6,16 +6,24 @@ from huggingface_hub import login
 from sentence_transformers import SentenceTransformer
 import fitz  # PyMuPDF
 import nltk
+import nltk.data
 
 # ============================== Environment Setup ==============================
 os.makedirs("nltk_data", exist_ok=True)
 os.environ["NLTK_DATA"] = os.path.join(os.getcwd(), "nltk_data")
 
-nltk.download("punkt", download_dir=os.environ["NLTK_DATA"])
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt", download_dir=os.environ["NLTK_DATA"])
+
 from nltk.tokenize import sent_tokenize
 
 # ============================== HuggingFace Auth ==============================
-login(token=st.secrets["HF_TOKEN"])
+try:
+    login(token=st.secrets["HF_TOKEN"])
+except Exception as e:
+    st.warning("⚠️ Hugging Face login failed. Check your HF_TOKEN in secrets.")
 
 # ============================== Gemini LLM Setup ==============================
 class GeminiLLM:
@@ -55,7 +63,7 @@ texts = []
 
 def chunk_text(text, max_words=100):
     words = text.split()
-    return [" ".join(words[i:i+max_words]) for i in range(0, len(words), max_words)]
+    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
 
 if uploaded_files:
     with st.status("📄 Extracting text..."):
@@ -68,11 +76,13 @@ if uploaded_files:
                 doc = fitz.open(file_path)
                 for page in doc:
                     raw_text = page.get_text()
-                    texts.extend(chunk_text(raw_text, max_words=80))
+                    chunks = chunk_text(raw_text, max_words=80)
+                    texts.extend([chunk.strip() for chunk in chunks if len(chunk.strip()) > 20])
             elif file.name.endswith(".txt"):
                 with open(file_path, "r", encoding="utf-8") as f:
                     raw_text = f.read()
-                    texts.extend(chunk_text(raw_text, max_words=80))
+                    chunks = chunk_text(raw_text, max_words=80)
+                    texts.extend([chunk.strip() for chunk in chunks if len(chunk.strip()) > 20])
 
     st.success("✅ Text extracted from uploaded files.")
 
@@ -80,7 +90,7 @@ if uploaded_files:
 llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
 embedder = HuggingFaceEmbedding()
 
-# ============================== Simple Vector Retrieval ==============================
+# ============================== Vector Search & Response ==============================
 if texts:
     embedded_texts = [(text, embedder.get_embedding(text)) for text in texts]
 
@@ -92,20 +102,27 @@ if texts:
             from sklearn.metrics.pairwise import cosine_similarity
             import numpy as np
 
-            similarities = [(text, cosine_similarity([vec], [query_vec])[0][0]) for text, vec in embedded_texts]
-            top_match = max(similarities, key=lambda x: x[1])[0]
+            similarities = [(text, float(cosine_similarity([vec], [query_vec])[0][0])) for text, vec in embedded_texts]
+            top_matches = sorted(similarities, key=lambda x: x[1], reverse=True)[:3]
 
-            prompt = f"""Answer the question using the context below.
+            combined_context = "\n\n".join([match[0] for match in top_matches])
 
-Context: {top_match}
+            prompt = f"""Use the context below to answer the question. Be concise and specific.
+
+Context:
+{combined_context}
 
 Question: {user_input}
 
 Answer:"""
+
             try:
                 answer = llm.complete(prompt)
-                st.markdown(f"**Answer:** {answer}")
+                st.markdown(f"### 🧠 Answer:\n{answer}")
+                with st.expander("🔍 Show retrieved context"):
+                    for i, (ctx, score) in enumerate(top_matches):
+                        st.markdown(f"**Match {i+1} (Score: {score:.2f})**\n```\n{ctx}\n```")
             except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                st.error(f"❌ Error from Gemini: {str(e)}")
 else:
     st.info("📌 Please upload PDF or TXT files to start.")
