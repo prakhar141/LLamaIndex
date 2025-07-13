@@ -41,8 +41,8 @@ def load_pdf_chunks(file_path):
 
 
 # =================== Streamlit UI ===================
-st.set_page_config(page_title="📚 PDF Chatbot", page_icon="🧠")
-st.title("📚 Chat with your PDFs")
+st.set_page_config(page_title="📚 Snipurr ", page_icon="🧠")
+st.title("📚 Talk to your PDF")
 
 uploaded_file = st.file_uploader("📂 Upload a PDF file", type=["pdf"])
 query = st.text_input("💬 Ask a question from your PDF:")
