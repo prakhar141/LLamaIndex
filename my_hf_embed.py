@@ -1,4 +1,4 @@
-from llama_index.core.embeddings.base import BaseEmbedding
+from llama_index.embeddings.base import BaseEmbedding
 from sentence_transformers import SentenceTransformer
 
 class HuggingFaceEmbedding(BaseEmbedding):
