@@ -1,73 +1,41 @@
 import os
-os.environ["NLTK_DATA"] = os.path.join(os.getcwd(), "nltk_data")
-import nltk
-nltk.download("punkt", download_dir=os.environ["NLTK_DATA"])
-
-import os
 import time
 import logging
 import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import TooManyRequests
 from huggingface_hub import login
-from pydantic import PrivateAttr
+from sentence_transformers import SentenceTransformer
+import fitz  # PyMuPDF
+import nltk
+nltk.download("punkt")
+from nltk.tokenize import sent_tokenize
 
-# Login to Hugging Face
+# ============================== Environment Setup ==============================
+os.makedirs("nltk_data", exist_ok=True)
+os.environ["NLTK_DATA"] = os.path.join(os.getcwd(), "nltk_data")
+
+# ============================== HuggingFace Auth ==============================
 login(token=st.secrets["HF_TOKEN"])
 
-from llama_index.core.readers import SimpleDirectoryReader
-from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, ServiceContext
-from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
-from langchain.embeddings.huggingface import HuggingFaceBgeEmbeddings
-
 # ============================== Gemini LLM Setup ==============================
-class GeminiLLM(CustomLLM):
+class GeminiLLM:
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
-        super().__init__()
         genai.configure(api_key=api_key)
-        object.__setattr__(self, "_model_name", model)
-        object.__setattr__(self, "_model", genai.GenerativeModel(model))
+        self.model = genai.GenerativeModel(model)
 
-    @property
-    def context_window(self) -> int:
-        return 8192
+    def complete(self, prompt: str) -> str:
+        response = self.model.generate_content(prompt)
+        return response.text
 
-    @property
-    def num_output(self) -> int:
-        return 512
+# ============================== Embedding Model ==============================
+class HuggingFaceEmbedding:
+    def __init__(self, model_name="BAAI/bge-base-en", device="cpu", normalize=True):
+        self.model = SentenceTransformer(model_name)
+        self.normalize = normalize
 
-    @property
-    def metadata(self) -> LLMMetadata:
-        return LLMMetadata(
-            context_window=self.context_window,
-            num_output=self.num_output,
-            model_name=self._model_name,
-        )
-
-    def complete(self, prompt: str, **kwargs) -> CompletionResponse:
-        response = self._model.generate_content(prompt)
-        return CompletionResponse(text=response.text)
-
-    def stream_complete(self, prompt: str, **kwargs):
-        raise NotImplementedError("Streaming not supported.")
-
-# ============================== Logging & Retry ==============================
-logging.basicConfig(level=logging.INFO)
-
-def query_index_with_retry(engine, prompt, max_retries=5, backoff=2):
-    attempt = 0
-    while attempt < max_retries:
-        try:
-            response = engine.query(prompt)
-            return response.response
-        except TooManyRequests:
-            logging.warning(f"Rate limit hit. Retry {attempt+1}/{max_retries}")
-            time.sleep(backoff * (attempt + 1))
-            attempt += 1
-        except Exception as e:
-            logging.error(f"Query error: {e}")
-            break
-    return "⚠️ Failed after retries."
+    def get_embedding(self, text):
+        return self.model.encode(text, normalize_embeddings=self.normalize)
 
 # ============================== Streamlit UI ==============================
 st.set_page_config(page_title="PDF Chatbot", page_icon="📚", layout="centered")
@@ -77,78 +45,49 @@ st.markdown("Upload your PDFs or text files and ask questions from their content
 uploaded_files = st.file_uploader("📂 Upload PDF or TXT files", type=["pdf", "txt"], accept_multiple_files=True)
 
 DATA_DIR = "data"
-INDEX_DIR = "storage"
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # Save files
+texts = []
 if uploaded_files:
-    os.makedirs(DATA_DIR, exist_ok=True)
     for file in uploaded_files:
         file_path = os.path.join(DATA_DIR, file.name)
         with open(file_path, "wb") as f:
             f.write(file.read())
-    st.success("✅ Files uploaded and saved.")
 
+        if file.name.endswith(".pdf"):
+            doc = fitz.open(file_path)
+            for page in doc:
+                texts.extend(sent_tokenize(page.get_text()))
+        elif file.name.endswith(".txt"):
+            with open(file_path, "r", encoding="utf-8") as f:
+                texts.extend(sent_tokenize(f.read()))
 
-from my_hf_embed import HuggingFaceEmbedding
+    st.success("✅ Files uploaded and text extracted.")
 
-
-embed_model = HuggingFaceEmbedding(
-    model_name="BAAI/bge-base-en",
-    device="cpu",
-    embed_batch_size=8,
-    normalize=True
-)
-
+# Initialize models
 llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
-embed_model = LangchainEmbedding(
-    HuggingFaceBgeEmbeddings(
-        model_name="BAAI/bge-base-en",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
-)
-service_context = ServiceContext.from_defaults(
-    llm=llm,
-    embed_model=embed_model,
-    chunk_size=800,
-    chunk_overlap=20,
-)
-from llama_index.core.settings import Settings  # New import
+embedder = HuggingFaceEmbedding()
 
-# After creating service_context
-Settings.llm = llm
-Settings.embed_model = embed_model
+# Simple Retrieval (no llama-index)
+if texts:
+    # Compute embeddings once
+    embedded_texts = [(text, embedder.get_embedding(text)) for text in texts]
 
-
-# Index logic
-if os.path.exists(DATA_DIR) and any(os.scandir(DATA_DIR)):
-    if os.path.exists(INDEX_DIR):
-        try:
-            st.info("📦 Loading existing index...")
-            storage_context = StorageContext.from_defaults(persist_dir=INDEX_DIR)
-            index = load_index_from_storage(storage_context)
-            query_engine = index.as_query_engine()
-            st.success("✅ Index loaded successfully.")
-        except Exception as e:
-            st.error(f"❌ Failed to load index: {e}")
-            st.stop()
-    else:
-        with st.spinner("🔍 Indexing uploaded files..."):
-            try:
-                documents = SimpleDirectoryReader(DATA_DIR).load_data()
-                index = VectorStoreIndex.from_documents(documents, service_context=service_context)
-                index.storage_context.persist(persist_dir=INDEX_DIR)
-                query_engine = index.as_query_engine()
-                st.success("✅ New index created.")
-            except Exception as e:
-                st.error(f"❌ Indexing failed: {e}")
-                st.stop()
-
-    # Ask questions
     user_input = st.text_input("💬 Ask a question from the documents:")
     if user_input:
         with st.spinner("🤖 Thinking..."):
-            answer = query_index_with_retry(query_engine, user_input)
+            query_vec = embedder.get_embedding(user_input)
+
+            # Compute cosine similarity manually
+            from sklearn.metrics.pairwise import cosine_similarity
+            import numpy as np
+
+            similarities = [(text, cosine_similarity([vec], [query_vec])[0][0]) for text, vec in embedded_texts]
+            top_match = max(similarities, key=lambda x: x[1])[0]
+
+            prompt = f"Answer this question based on the following context:\n\nContext: {top_match}\n\nQuestion: {user_input}\n\nAnswer:"
+            answer = llm.complete(prompt)
             st.markdown(f"**Answer:** {answer}")
 else:
     st.info("📌 Please upload files to start.")
