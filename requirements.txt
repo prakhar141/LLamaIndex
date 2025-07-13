@@ -1,31 +1,19 @@
-# UI
 streamlit==1.32.2
-
-# Google Gemini
 google-generativeai==0.4.1
 google-api-core==2.17.1
 
-# LlamaIndex (core version)
 llama-index==0.10.20
-
-# LangChain & Embeddings
 langchain==0.1.13
+
 huggingface-hub==0.20.3
 sentence-transformers==2.2.2
 sentencepiece==0.1.99
-torch==2.1.2  # lightweight CPU version
+transformers==4.38.2
+torch==2.1.2
 
-# Pydantic (used in llama-index + huggingface)
 pydantic==2.6.4
 pydantic-core==2.16.3
-
-# Hugging Face integration
-transformers==4.38.2
-
-# Utility
 protobuf==4.25.3
 requests==2.31.0
 tqdm==4.66.4
-
-# For PDF/Text reading (ensure you use PyMuPDF if needed)
 PyMuPDF==1.23.9
