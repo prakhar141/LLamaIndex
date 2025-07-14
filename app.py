@@ -39,7 +39,7 @@ def load_pdf_chunks(file_path, source_name):
 # ========== Streamlit UI ==========
 st.set_page_config(page_title="📚 Snipurr", page_icon="🧠")
 st.title("📚 Talk to your PDF")
-st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A | Stats")
+st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A ")
 
 # Init session state
 if "history" not in st.session_state:
@@ -47,11 +47,11 @@ if "history" not in st.session_state:
 
 uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
 query = st.text_input("💬 Ask something or leave blank for non-QA modes:")
-mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A", "Stats"])
+mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A"])
 
-# ========== Main Logic ==========
+
 if uploaded_files:
-    with st.spinner("📄 Reading and chunking PDFs..."):
+    with st.spinner("📄 Reading your PDFs..."):
         all_chunks = []
         for file in uploaded_files:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -60,7 +60,7 @@ if uploaded_files:
             chunks = load_pdf_chunks(file_path, file.name)
             all_chunks.extend(chunks)
 
-    with st.spinner("🔎 Embedding..."):
+    with st.spinner("🔎 Reading..."):
         embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
         vectordb = FAISS.from_documents(all_chunks, embeddings)
         retriever = vectordb.as_retriever(search_type="similarity", k=3)
@@ -90,11 +90,7 @@ if uploaded_files:
                 prompt = f"From this PDF content, generate 5 question-answer pairs:\n\n{context}"
                 answer = llm._call(prompt)
 
-            elif mode == "Stats":
-                num_docs = len(all_chunks)
-                avg_length = sum(len(doc.page_content.split()) for doc in all_chunks) // max(1, num_docs)
-                answer = f"📊 Total Chunks: {num_docs}\n📏 Average Chunk Length: {avg_length} words"
-
+            
             st.session_state.history.append((f"{mode} → {query}", answer))
             st.success("🧠 Answer:")
             st.markdown(answer)
