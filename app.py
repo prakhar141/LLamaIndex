@@ -11,7 +11,7 @@ from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from langchain.llms.base import LLM
 
-# ========== Custom Gemini LLM Wrapper ==========
+
 class GeminiLLM(LLM):
     model: str = "gemini-1.5-flash"
     api_key: str = ""
