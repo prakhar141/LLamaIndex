@@ -46,7 +46,7 @@ if "history" not in st.session_state:
     st.session_state.history = []
 
 uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
-query = st.text_input("💬 Ask something or leave blank for non-QA modes:")
+query = st.text_input("💬 Ask me something or leave blank for non-QA modes:")
 mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A"])
 
 
