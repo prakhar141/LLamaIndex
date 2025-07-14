@@ -1,16 +1,15 @@
 import os
-import streamlit as st
-import fitz  # PyMuPDF
 import tempfile
+import fitz  # PyMuPDF
+import streamlit as st
 import google.generativeai as genai
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
+from typing import Optional, List
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from langchain.llms.base import LLM
-from typing import Optional, List
-
 
 # =================== Custom Gemini LLM Wrapper ===================
 class GeminiLLM(LLM):
@@ -27,9 +26,8 @@ class GeminiLLM(LLM):
     def _llm_type(self) -> str:
         return "custom-gemini"
 
-
-# =================== Helper: PDF Loader ===================
-def load_pdf_chunks(file_path):
+# =================== PDF Loader ===================
+def load_pdf_chunks(file_path, source_name):
     doc = fitz.open(file_path)
     full_text = ""
     for page in doc:
@@ -37,40 +35,82 @@ def load_pdf_chunks(file_path):
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
     texts = splitter.split_text(full_text)
-    return [Document(page_content=t) for t in texts]
-
+    return [Document(page_content=t, metadata={"source": source_name}) for t in texts]
 
 # =================== Streamlit UI ===================
-st.set_page_config(page_title="📚 Snipurr ", page_icon="🧠")
+st.set_page_config(page_title="📚 Snipurr", page_icon="🧠")
 st.title("📚 Talk to your PDF")
+st.markdown("Upload PDFs and chat, summarize, extract keywords, or download answers!")
 
-uploaded_file = st.file_uploader("📂 Upload a PDF file", type=["pdf"])
-query = st.text_input("💬 Ask a question from your PDF:")
+# Chat history init
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
+query = st.text_input("💬 Ask something or use a mode:")
+mode = st.selectbox("Choose Mode", ["QA", "Summarize", "Keywords"])
 
 # =================== Main Logic ===================
-if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        file_path = tmp_file.name
+if uploaded_files:
+    with st.spinner("📄 Reading and chunking PDFs..."):
+        all_chunks = []
+        for file in uploaded_files:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(file.read())
+                file_path = tmp_file.name
+            chunks = load_pdf_chunks(file_path, file.name)
+            all_chunks.extend(chunks)
 
-    # Load & chunk
-    with st.spinner("📄 Reading and chunking PDF..."):
-        chunks = load_pdf_chunks(file_path)
-
-    # Embedding & Index
-    with st.spinner("🔎 Reading..."):
+    with st.spinner("🔎 Embedding..."):
         embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-        vectordb = FAISS.from_documents(chunks, embeddings)
+        vectordb = FAISS.from_documents(all_chunks, embeddings)
         retriever = vectordb.as_retriever(search_type="similarity", k=3)
 
-    # Gemini LLM
     llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
-
-    # QA Chain
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
     if query:
-        with st.spinner("🤖 Thinking it."):
-            answer = qa.run(query)
+        with st.spinner("🤖 Thinking..."):
+            if mode == "QA":
+                answer = qa.run(query)
+            elif mode == "Summarize":
+                docs = retriever.get_relevant_documents(query)
+                context = "\n".join([doc.page_content for doc in docs])
+                prompt = f"Summarize this content:\n\n{context}"
+                answer = llm._call(prompt)
+            elif mode == "Keywords":
+                docs = retriever.get_relevant_documents(query)
+                context = "\n".join([doc.page_content for doc in docs])
+                prompt = f"Extract important keywords from this content:\n\n{context}"
+                answer = llm._call(prompt)
+
+            st.session_state.history.append((query, answer))
             st.success("🧠 Answer:")
-            st.write(answer)
+            st.markdown(answer)
+
+            # Supporting context
+            with st.expander("📚 Supporting Contexts"):
+                for doc in retriever.get_relevant_documents(query):
+                    st.markdown(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                    st.code(doc.page_content[:400])
+
+            # Feedback
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("👍 Helpful"):
+                    st.toast("Thanks for your feedback!")
+            with col2:
+                if st.button("👎 Not Helpful"):
+                    st.toast("We'll work on it!")
+
+            # Download button
+            st.download_button("📥 Download Answer", answer, file_name="response.txt")
+
+    # History section
+    with st.expander("🕓 Chat History"):
+        for q, a in reversed(st.session_state.history):
+            st.markdown(f"**Q:** {q}")
+            st.markdown(f"**A:** {a}")
+            st.markdown("---")
+else:
+    st.info("📌 Upload a PDF to get started.")
