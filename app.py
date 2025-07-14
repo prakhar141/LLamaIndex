@@ -11,7 +11,7 @@ from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from langchain.llms.base import LLM
 
-# =================== Custom Gemini LLM Wrapper ===================
+# ========== Custom Gemini LLM Wrapper ==========
 class GeminiLLM(LLM):
     model: str = "gemini-1.5-flash"
     api_key: str = ""
@@ -26,31 +26,30 @@ class GeminiLLM(LLM):
     def _llm_type(self) -> str:
         return "custom-gemini"
 
-# =================== PDF Loader ===================
+# ========== PDF Loader ==========
 def load_pdf_chunks(file_path, source_name):
     doc = fitz.open(file_path)
     full_text = ""
     for page in doc:
         full_text += page.get_text()
-
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
     texts = splitter.split_text(full_text)
     return [Document(page_content=t, metadata={"source": source_name}) for t in texts]
 
-# =================== Streamlit UI ===================
+# ========== Streamlit UI ==========
 st.set_page_config(page_title="📚 Snipurr", page_icon="🧠")
 st.title("📚 Talk to your PDF")
-st.markdown("Upload PDFs and chat, summarize, extract keywords, or download answers!")
+st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A | Stats")
 
-# Chat history init
+# Init session state
 if "history" not in st.session_state:
     st.session_state.history = []
 
 uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
-query = st.text_input("💬 Ask something or use a mode:")
-mode = st.selectbox("Choose Mode", ["QA", "Summarize", "Keywords"])
+query = st.text_input("💬 Ask something or leave blank for non-QA modes:")
+mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A", "Stats"])
 
-# =================== Main Logic ===================
+# ========== Main Logic ==========
 if uploaded_files:
     with st.spinner("📄 Reading and chunking PDFs..."):
         all_chunks = []
@@ -69,30 +68,43 @@ if uploaded_files:
     llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
-    if query:
+    if query or mode in ["Generate Q&A", "Stats"]:
         with st.spinner("🤖 Thinking..."):
             if mode == "QA":
                 answer = qa.run(query)
+
             elif mode == "Summarize":
                 docs = retriever.get_relevant_documents(query)
                 context = "\n".join([doc.page_content for doc in docs])
                 prompt = f"Summarize this content:\n\n{context}"
                 answer = llm._call(prompt)
+
             elif mode == "Keywords":
                 docs = retriever.get_relevant_documents(query)
                 context = "\n".join([doc.page_content for doc in docs])
                 prompt = f"Extract important keywords from this content:\n\n{context}"
                 answer = llm._call(prompt)
 
-            st.session_state.history.append((query, answer))
+            elif mode == "Generate Q&A":
+                context = "\n".join([doc.page_content for doc in all_chunks[:5]])
+                prompt = f"From this PDF content, generate 5 question-answer pairs:\n\n{context}"
+                answer = llm._call(prompt)
+
+            elif mode == "Stats":
+                num_docs = len(all_chunks)
+                avg_length = sum(len(doc.page_content.split()) for doc in all_chunks) // max(1, num_docs)
+                answer = f"📊 Total Chunks: {num_docs}\n📏 Average Chunk Length: {avg_length} words"
+
+            st.session_state.history.append((f"{mode} → {query}", answer))
             st.success("🧠 Answer:")
             st.markdown(answer)
 
-            # Supporting context
-            with st.expander("📚 Supporting Contexts"):
-                for doc in retriever.get_relevant_documents(query):
-                    st.markdown(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
-                    st.code(doc.page_content[:400])
+            # Source context
+            if mode in ["QA", "Summarize", "Keywords"]:
+                with st.expander("📚 Supporting Contexts"):
+                    for doc in retriever.get_relevant_documents(query):
+                        st.markdown(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                        st.code(doc.page_content[:400])
 
             # Feedback
             col1, col2 = st.columns(2)
@@ -103,10 +115,10 @@ if uploaded_files:
                 if st.button("👎 Not Helpful"):
                     st.toast("We'll work on it!")
 
-            # Download button
+            # Download answer
             st.download_button("📥 Download Answer", answer, file_name="response.txt")
 
-    # History section
+    # Chat history
     with st.expander("🕓 Chat History"):
         for q, a in reversed(st.session_state.history):
             st.markdown(f"**Q:** {q}")
