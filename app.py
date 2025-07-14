@@ -122,3 +122,13 @@ if uploaded_files:
             st.markdown("---")
 else:
     st.info("📌 Upload a PDF to get started.")
+# ========== Footer ==========
+st.markdown(
+    """
+    <hr style="margin-top: 30px; margin-bottom: 10px;">
+    <div style='text-align: center; color: gray; font-size: 14px;'>
+        Developed with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani
+    </div>
+    """,
+    unsafe_allow_html=True
+)
