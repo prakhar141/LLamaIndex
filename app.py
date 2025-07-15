@@ -1,8 +1,10 @@
 import os
 import tempfile
-import fitz  # PyMuPDF
+import urllib.parse
+import fitz
 import streamlit as st
 import google.generativeai as genai
+import wikipedia
 from typing import Optional, List
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -10,7 +12,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from langchain.llms.base import LLM
-import urllib.parse
 
 # ========== Custom Gemini LLM Wrapper ==========
 class GeminiLLM(LLM):
@@ -20,50 +21,45 @@ class GeminiLLM(LLM):
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
         genai.configure(api_key=self.api_key)
         model = genai.GenerativeModel(self.model)
-        response = model.generate_content(prompt)
-        return response.text
+        return model.generate_content(prompt).text
 
     @property
     def _llm_type(self) -> str:
         return "custom-gemini"
 
-# ========== PDF Loader ==========
+# ========== PDF Text Chunking ==========
 def load_pdf_chunks(file_path, source_name):
     doc = fitz.open(file_path)
-    full_text = ""
-    for page in doc:
-        full_text += page.get_text()
+    text = "".join(page.get_text() for page in doc)
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
-    texts = splitter.split_text(full_text)
-    return [Document(page_content=t, metadata={"source": source_name}) for t in texts]
+    return [Document(page_content=chunk, metadata={"source": source_name})
+            for chunk in splitter.split_text(text)]
 
-# ========== Streamlit UI ==========
+# ========== Streamlit Layout ==========
 st.set_page_config(page_title="📚 Snipurr", page_icon="🧠")
 st.title("📚 Talk to your PDF")
-st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A | Wikipedia & YouTube Links")
+st.markdown("Upload PDFs and choose modes: QA, Summary, Keywords, Auto Q&A")
 
-# ========== Session State ==========
 if "history" not in st.session_state:
     st.session_state.history = []
 
 uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
-query = st.text_input("💬 Ask me something or leave blank for non-QA modes:")
+query = st.text_input("💬 Ask something or leave blank for Q&A generation:")
 mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A"])
-external_links = st.toggle("🌐 Fetch Wikipedia & YouTube Links")
+external = st.checkbox("🌐 Fetch Wikipedia summary & YouTube link")
 
-# ========== Main Logic ==========
+# ========== Core Logic ==========
 if uploaded_files:
-    with st.spinner("📄 Reading your PDFs..."):
+    with st.spinner("📄 Extracting text from PDFs..."):
         all_chunks = []
         for file in uploaded_files:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                tmp_file.write(file.read())
-                file_path = tmp_file.name
-            chunks = load_pdf_chunks(file_path, file.name)
-            all_chunks.extend(chunks)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp.write(file.read())
+            all_chunks += load_pdf_chunks(tmp.name, file.name)
 
-    with st.spinner("🔎 Embedding..."):
-        embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    with st.spinner("🔎 Building vector store..."):
+        embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en",
+                                           model_kwargs={"device": "cpu"})
         vectordb = FAISS.from_documents(all_chunks, embeddings)
         retriever = vectordb.as_retriever(search_type="similarity", k=3)
 
@@ -71,71 +67,68 @@ if uploaded_files:
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
     if query or mode == "Generate Q&A":
-        with st.spinner("🤖 Thinking..."):
+        with st.spinner("🤖 Generating response..."):
             if mode == "QA":
                 answer = qa.run(query)
+
             elif mode == "Summarize":
                 docs = retriever.get_relevant_documents(query)
-                context = "\n".join([doc.page_content for doc in docs])
-                prompt = f"Summarize this content:\n\n{context}"
-                answer = llm._call(prompt)
+                context = "\n".join(doc.page_content for doc in docs)
+                answer = llm._call(f"Summarize this:\n\n{context}")
+
             elif mode == "Keywords":
                 docs = retriever.get_relevant_documents(query)
-                context = "\n".join([doc.page_content for doc in docs])
-                prompt = f"Extract important keywords from this content:\n\n{context}"
-                answer = llm._call(prompt)
-            elif mode == "Generate Q&A":
-                context = "\n".join([doc.page_content for doc in all_chunks[:5]])
-                prompt = f"From this PDF content, generate 5 question-answer pairs:\n\n{context}"
-                answer = llm._call(prompt)
+                context = "\n".join(doc.page_content for doc in docs)
+                answer = llm._call(f"Extract keywords from this:\n\n{context}")
 
-            # Store & Display
+            elif mode == "Generate Q&A":
+                context = "\n".join(doc.page_content for doc in all_chunks[:5])
+                answer = llm._call(f"Generate 5 question-answer pairs from this:\n\n{context}")
+
+            # Append answer
             st.session_state.history.append((f"{mode} → {query}", answer))
             st.success("🧠 Answer:")
             st.markdown(answer)
 
-            # External Search Section
-            if external_links:
-                search_query = urllib.parse.quote_plus(query if query else "PDF content")
-                st.markdown("### 🌐 External Info:")
-                st.markdown(f"- 🔍 [Wikipedia Search](https://en.wikipedia.org/wiki/Special:Search?search={search_query})")
-                st.markdown(f"- 📺 [YouTube Search](https://www.youtube.com/results?search_query={search_query})")
+            # External enrichment
+            if external and query:
+                encoded = urllib.parse.quote_plus(query)
+                st.markdown("### 🌐 Related Resources")
+                # Wikipedia summary
+                try:
+                    summary = wikipedia.summary(query, sentences=2)
+                    st.markdown(f"**Wikipedia Summary:** {summary}")
+                except:
+                    st.markdown("*No Wikipedia summary found.*")
+                # YouTube link
+                st.markdown(f"- 📺 [YouTube search](https://www.youtube.com/results?search_query={encoded})")
 
-            # Context Section
+            # PDF contexts
             if mode in ["QA", "Summarize", "Keywords"]:
-                with st.expander("📚 Supporting Contexts"):
+                with st.expander("📚 Supporting PDF Context"):
                     for doc in retriever.get_relevant_documents(query):
-                        st.markdown(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                        st.markdown(f"**Source:** {doc.metadata.get('source')}")
                         st.code(doc.page_content[:400])
 
-            # Feedback
+            # Feedback + Download
             col1, col2 = st.columns(2)
-            with col1:
-                if st.button("👍 Helpful"):
-                    st.toast("Thanks for your feedback!")
-            with col2:
-                if st.button("👎 Not Helpful"):
-                    st.toast("We'll work on it!")
-
+            if col1.button("👍 Helpful"):
+                st.toast("Thanks!")
+            if col2.button("👎 Not Helpful"):
+                st.toast("Will improve soon!")
             st.download_button("📥 Download Answer", answer, file_name="response.txt")
 
-    # History
     with st.expander("🕓 Chat History"):
-        for q, a in reversed(st.session_state.history):
-            st.markdown(f"**Q:** {q}")
-            st.markdown(f"**A:** {a}")
-            st.markdown("---")
-
+        for q_, a_ in reversed(st.session_state.history):
+            st.markdown(f"**Q:** {q_}")
+            st.markdown(f"**A:** {a_}\n---")
 else:
     st.info("📌 Upload a PDF to get started.")
 
 # ========== Footer ==========
-st.markdown(
-    """
-    <hr style="margin-top: 30px; margin-bottom: 10px;">
-    <div style='text-align: center; color: gray; font-size: 14px;'>
-        Developed with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<hr style="margin-top: 20px; margin-bottom: 10px;">
+<div style='text-align: center; color: gray; font-size: 14px;'>
+Developed with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani
+</div>
+""", unsafe_allow_html=True)
