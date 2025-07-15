@@ -11,7 +11,7 @@ from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from langchain.llms.base import LLM
 
-
+# ========== Custom Gemini LLM Wrapper ==========
 class GeminiLLM(LLM):
     model: str = "gemini-1.5-flash"
     api_key: str = ""
@@ -49,7 +49,7 @@ uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_
 query = st.text_input("💬 Ask me something or leave blank for non-QA modes:")
 mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A"])
 
-
+# ========== Main Logic ==========
 if uploaded_files:
     with st.spinner("📄 Reading your PDFs..."):
         all_chunks = []
@@ -60,7 +60,7 @@ if uploaded_files:
             chunks = load_pdf_chunks(file_path, file.name)
             all_chunks.extend(chunks)
 
-    with st.spinner("🔎 Reading..."):
+    with st.spinner("🔎 Embedding..."):
         embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
         vectordb = FAISS.from_documents(all_chunks, embeddings)
         retriever = vectordb.as_retriever(search_type="similarity", k=3)
@@ -68,34 +68,31 @@ if uploaded_files:
     llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
-    if query or mode in ["Generate Q&A", "Stats"]:
+    if query or mode == "Generate Q&A":
         with st.spinner("🤖 Thinking..."):
             if mode == "QA":
                 answer = qa.run(query)
-
             elif mode == "Summarize":
                 docs = retriever.get_relevant_documents(query)
                 context = "\n".join([doc.page_content for doc in docs])
                 prompt = f"Summarize this content:\n\n{context}"
                 answer = llm._call(prompt)
-
             elif mode == "Keywords":
                 docs = retriever.get_relevant_documents(query)
                 context = "\n".join([doc.page_content for doc in docs])
                 prompt = f"Extract important keywords from this content:\n\n{context}"
                 answer = llm._call(prompt)
-
             elif mode == "Generate Q&A":
                 context = "\n".join([doc.page_content for doc in all_chunks[:5]])
                 prompt = f"From this PDF content, generate 5 question-answer pairs:\n\n{context}"
                 answer = llm._call(prompt)
 
-            
+            # Store and show response
             st.session_state.history.append((f"{mode} → {query}", answer))
             st.success("🧠 Answer:")
             st.markdown(answer)
 
-            # Source context
+            # Source context for helpful modes
             if mode in ["QA", "Summarize", "Keywords"]:
                 with st.expander("📚 Supporting Contexts"):
                     for doc in retriever.get_relevant_documents(query):
@@ -114,7 +111,7 @@ if uploaded_files:
             # Download answer
             st.download_button("📥 Download Answer", answer, file_name="response.txt")
 
-    # Chat history
+    # Chat History
     with st.expander("🕓 Chat History"):
         for q, a in reversed(st.session_state.history):
             st.markdown(f"**Q:** {q}")
@@ -122,6 +119,7 @@ if uploaded_files:
             st.markdown("---")
 else:
     st.info("📌 Upload a PDF to get started.")
+
 # ========== Footer ==========
 st.markdown(
     """
