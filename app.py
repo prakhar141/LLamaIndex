@@ -10,6 +10,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from langchain.llms.base import LLM
+import urllib.parse
 
 # ========== Custom Gemini LLM Wrapper ==========
 class GeminiLLM(LLM):
@@ -39,15 +40,16 @@ def load_pdf_chunks(file_path, source_name):
 # ========== Streamlit UI ==========
 st.set_page_config(page_title="📚 Snipurr", page_icon="🧠")
 st.title("📚 Talk to your PDF")
-st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A ")
+st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A | Wikipedia & YouTube Links")
 
-# Init session state
+# ========== Session State ==========
 if "history" not in st.session_state:
     st.session_state.history = []
 
 uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
 query = st.text_input("💬 Ask me something or leave blank for non-QA modes:")
 mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A"])
+external_links = st.toggle("🌐 Fetch Wikipedia & YouTube Links")
 
 # ========== Main Logic ==========
 if uploaded_files:
@@ -87,12 +89,19 @@ if uploaded_files:
                 prompt = f"From this PDF content, generate 5 question-answer pairs:\n\n{context}"
                 answer = llm._call(prompt)
 
-            # Store and show response
+            # Store & Display
             st.session_state.history.append((f"{mode} → {query}", answer))
             st.success("🧠 Answer:")
             st.markdown(answer)
 
-            # Source context for helpful modes
+            # External Search Section
+            if external_links:
+                search_query = urllib.parse.quote_plus(query if query else "PDF content")
+                st.markdown("### 🌐 External Info:")
+                st.markdown(f"- 🔍 [Wikipedia Search](https://en.wikipedia.org/wiki/Special:Search?search={search_query})")
+                st.markdown(f"- 📺 [YouTube Search](https://www.youtube.com/results?search_query={search_query})")
+
+            # Context Section
             if mode in ["QA", "Summarize", "Keywords"]:
                 with st.expander("📚 Supporting Contexts"):
                     for doc in retriever.get_relevant_documents(query):
@@ -108,15 +117,15 @@ if uploaded_files:
                 if st.button("👎 Not Helpful"):
                     st.toast("We'll work on it!")
 
-            # Download answer
             st.download_button("📥 Download Answer", answer, file_name="response.txt")
 
-    # Chat History
+    # History
     with st.expander("🕓 Chat History"):
         for q, a in reversed(st.session_state.history):
             st.markdown(f"**Q:** {q}")
             st.markdown(f"**A:** {a}")
             st.markdown("---")
+
 else:
     st.info("📌 Upload a PDF to get started.")
 
