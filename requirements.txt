@@ -11,3 +11,4 @@ sentence-transformers
 google-generativeai
 PyMuPDF
 streamlit
+wikipedia
