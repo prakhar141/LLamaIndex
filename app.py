@@ -1,132 +1,103 @@
 import os
-import tempfile
 import fitz  # PyMuPDF
 import streamlit as st
-import google.generativeai as genai
-from typing import Optional, List
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from langchain.llms import HuggingFacePipeline
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
-from langchain.llms.base import LLM
 
-# ========== Custom Gemini LLM Wrapper ==========
-class GeminiLLM(LLM):
-    model: str = "gemini-1.5-flash"
-    api_key: str = ""
-
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel(self.model)
-        response = model.generate_content(prompt)
-        return response.text
-
-    @property
-    def _llm_type(self) -> str:
-        return "custom-gemini"
-
-# ========== PDF Loader ==========
-def load_pdf_chunks(file_path, source_name):
-    doc = fitz.open(file_path)
-    full_text = ""
-    for page in doc:
-        full_text += page.get_text()
+# ========= Load PDFs =========
+def load_all_pdfs():
+    docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
-    texts = splitter.split_text(full_text)
-    return [Document(page_content=t, metadata={"source": source_name}) for t in texts]
+    for file in os.listdir():
+        if file.endswith(".pdf"):
+            with fitz.open(file) as doc:
+                full_text = "\n".join([page.get_text() for page in doc])
+            chunks = splitter.split_text(full_text)
+            docs.extend([Document(page_content=chunk, metadata={"source": file}) for chunk in chunks])
+    return docs
 
-# ========== Streamlit UI ==========
-st.set_page_config(page_title="📚 Snipurr", page_icon="🧠")
-st.title("📚 Talk to your PDF")
-st.markdown("Upload PDFs and explore: QA | Summary | Keywords | Auto Q&A ")
+# ========= UI Config =========
+st.set_page_config(page_title="🎓 Quillify", page_icon="🤖", layout="wide")
+st.markdown("""
+    <style>
+        .big-title { font-size: 36px; font-weight: 800; margin-bottom: 10px; color: #3B82F6; }
+        .subtitle { font-size: 16px; color: gray; margin-top: -10px; }
+        .stTextInput > div > div > input { font-size: 18px; }
+    </style>
+""", unsafe_allow_html=True)
+st.markdown("<div class='big-title'>🎓 Quillify</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Ask anything about BITS – syllabus, events, academics, policies, and more</div>", unsafe_allow_html=True)
 
-# Init session state
+# ========= Load Vector DB =========
+@st.cache_resource(show_spinner="📚 Reading PDFs...")
+def setup_vector_db():
+    documents = load_all_pdfs()
+    embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    vectordb = FAISS.from_documents(documents, embeddings)
+    return vectordb.as_retriever(search_type="similarity", k=4)
+
+retriever = setup_vector_db()
+
+# ========= Load LaMini-Flan-T5-783M =========
+@st.cache_resource(show_spinner="🤖 Booting up LLM...")
+def load_llm():
+    model_id = "MBZUAI/LaMini-Flan-T5-783M"
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
+    pipe = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512)
+    return HuggingFacePipeline(pipeline=pipe)
+
+llm = load_llm()
+
+# ========= Retrieval Chain =========
+qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+
+# ========= Chat State =========
 if "history" not in st.session_state:
     st.session_state.history = []
 
-uploaded_files = st.file_uploader("📂 Upload PDF files", type=["pdf"], accept_multiple_files=True)
-query = st.text_input("💬 Ask me something or leave blank for non-QA modes:")
-mode = st.selectbox("🧭 Choose Mode", ["QA", "Summarize", "Keywords", "Generate Q&A"])
+query = st.chat_input("💬 I know more about BITS than your CGPA does.")
 
-# ========== Main Logic ==========
-if uploaded_files:
-    with st.spinner("📄 Reading your PDFs..."):
-        all_chunks = []
-        for file in uploaded_files:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                tmp_file.write(file.read())
-                file_path = tmp_file.name
-            chunks = load_pdf_chunks(file_path, file.name)
-            all_chunks.extend(chunks)
+if query:
+    with st.spinner("🤖 Thinking..."):
+        answer = qa_chain.run(query)
+        st.session_state.history.append((query, answer))
 
-    with st.spinner("🔎 Embedding..."):
-        embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-        vectordb = FAISS.from_documents(all_chunks, embeddings)
-        retriever = vectordb.as_retriever(search_type="similarity", k=3)
+        # User's question
+        st.chat_message("user").markdown(query)
 
-    llm = GeminiLLM(api_key=st.secrets["GEMINI_API_KEY"])
-    qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
-
-    if query or mode == "Generate Q&A":
-        with st.spinner("🤖 Thinking..."):
-            if mode == "QA":
-                answer = qa.run(query)
-            elif mode == "Summarize":
-                docs = retriever.get_relevant_documents(query)
-                context = "\n".join([doc.page_content for doc in docs])
-                prompt = f"Summarize this content:\n\n{context}"
-                answer = llm._call(prompt)
-            elif mode == "Keywords":
-                docs = retriever.get_relevant_documents(query)
-                context = "\n".join([doc.page_content for doc in docs])
-                prompt = f"Extract important keywords from this content:\n\n{context}"
-                answer = llm._call(prompt)
-            elif mode == "Generate Q&A":
-                context = "\n".join([doc.page_content for doc in all_chunks[:5]])
-                prompt = f"From this PDF content, generate 5 question-answer pairs:\n\n{context}"
-                answer = llm._call(prompt)
-
-            # Store and show response
-            st.session_state.history.append((f"{mode} → {query}", answer))
-            st.success("🧠 Answer:")
+        # Assistant's answer
+        with st.chat_message("assistant"):
             st.markdown(answer)
 
-            # Source context for helpful modes
-            if mode in ["QA", "Summarize", "Keywords"]:
-                with st.expander("📚 Supporting Contexts"):
-                    for doc in retriever.get_relevant_documents(query):
-                        st.markdown(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
-                        st.code(doc.page_content[:400])
-
-            # Feedback
-            col1, col2 = st.columns(2)
+            # Feedback + Download
+            col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
                 if st.button("👍 Helpful"):
                     st.toast("Thanks for your feedback!")
             with col2:
                 if st.button("👎 Not Helpful"):
                     st.toast("We'll work on it!")
+            with col3:
+                st.download_button("📥 Download Answer", answer, file_name="response.txt")
 
-            # Download answer
-            st.download_button("📥 Download Answer", answer, file_name="response.txt")
-
-    # Chat History
+# ========= Chat History =========
+if st.session_state.history:
     with st.expander("🕓 Chat History"):
         for q, a in reversed(st.session_state.history):
             st.markdown(f"**Q:** {q}")
             st.markdown(f"**A:** {a}")
             st.markdown("---")
-else:
-    st.info("📌 Upload a PDF to get started.")
 
-# ========== Footer ==========
-st.markdown(
-    """
+# ========= Footer =========
+st.markdown("""
     <hr style="margin-top: 30px; margin-bottom: 10px;">
     <div style='text-align: center; color: gray; font-size: 14px;'>
-        Developed with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani
+        🤖 Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani
     </div>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
