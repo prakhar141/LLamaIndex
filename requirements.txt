@@ -11,4 +11,4 @@ sentence-transformers
 google-generativeai
 PyMuPDF
 streamlit
-wikipedia
+langchain-google-genai
