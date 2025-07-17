@@ -9,20 +9,25 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 from langchain.llms.base import LLM
 from typing import Optional, List
 
-# ========== Custom LangChain wrapper for LaMini-Flan ==========
 class LaMiniFlanLLM(LLM):
+    model_id = "MBZUAI/LaMini-Flan-T5-783M"  # You can also use "declare-lab/flan-alpaca-large"
+
     def __init__(self):
-        model_id = "declare-lab/flan-alpaca-large"  # you can use LaMini-Flan-T5-783M if required
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
-        self.pipe = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512)
+        super().__init__()
+        self._pipeline = pipeline(
+            "text2text-generation",
+            model=AutoModelForSeq2SeqLM.from_pretrained(self.model_id),
+            tokenizer=AutoTokenizer.from_pretrained(self.model_id),
+            max_new_tokens=512
+        )
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        return self.pipe(prompt)[0]["generated_text"]
+        result = self._pipeline(prompt)
+        return result[0]["generated_text"]
 
     @property
     def _llm_type(self) -> str:
-        return "custom"
+        return "lamini-flan-t5"
 
 # ========== Streamlit UI Setup ==========
 st.set_page_config(page_title="🎓 Quillify", page_icon="🤖", layout="wide")
