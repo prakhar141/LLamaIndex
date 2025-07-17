@@ -9,22 +9,27 @@ from langchain.llms.base import LLM
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from typing import Optional, List, ClassVar
 import torch
+from pydantic import PrivateAttr
 
-# ========== Custom LLM Wrapper with Token Truncation ==========
+
+# ========== Custom LaMini-Flan LLM Wrapper with Token Safety ==========
 class LaMiniFlanLLM(LLM):
     model_id: ClassVar[str] = "MBZUAI/LaMini-Flan-T5-783M"
 
+    _tokenizer: any = PrivateAttr()
+    _model: any = PrivateAttr()
+
     def __init__(self):
         super().__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id)
+        self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        self._model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id)
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        # Truncate safely to max 512 tokens
-        inputs = self.tokenizer(prompt, truncation=True, max_length=512, return_tensors="pt")
+        # Token-safe input
+        inputs = self._tokenizer(prompt, truncation=True, max_length=512, return_tensors="pt")
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=256)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            outputs = self._model.generate(**inputs, max_new_tokens=256)
+        return self._tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     @property
     def _llm_type(self) -> str:
