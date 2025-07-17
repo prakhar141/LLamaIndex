@@ -7,10 +7,10 @@ from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 from langchain.llms.base import LLM
-from typing import Optional, List
+from typing import Optional, List,ClassVar
 
 class LaMiniFlanLLM(LLM):
-    model_id = "MBZUAI/LaMini-Flan-T5-783M"  # You can also use "declare-lab/flan-alpaca-large"
+    model_id: ClassVar[str] = "MBZUAI/LaMini-Flan-T5-783M"  # You can also use "declare-lab/flan-alpaca-large"
 
     def __init__(self):
         super().__init__()
