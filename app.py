@@ -5,25 +5,26 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 from langchain.llms.base import LLM
-from typing import Optional, List,ClassVar
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from typing import Optional, List, ClassVar
+import torch
 
+# ========== Custom LLM Wrapper with Token Truncation ==========
 class LaMiniFlanLLM(LLM):
-    model_id: ClassVar[str] = "MBZUAI/LaMini-Flan-T5-783M"  # You can also use "declare-lab/flan-alpaca-large"
+    model_id: ClassVar[str] = "MBZUAI/LaMini-Flan-T5-783M"
 
     def __init__(self):
         super().__init__()
-        self._pipeline = pipeline(
-            "text2text-generation",
-            model=AutoModelForSeq2SeqLM.from_pretrained(self.model_id),
-            tokenizer=AutoTokenizer.from_pretrained(self.model_id),
-            max_new_tokens=512
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id)
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        result = self._pipeline(prompt)
-        return result[0]["generated_text"]
+        # Truncate safely to max 512 tokens
+        inputs = self.tokenizer(prompt, truncation=True, max_length=512, return_tensors="pt")
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_new_tokens=256)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     @property
     def _llm_type(self) -> str:
@@ -58,7 +59,7 @@ def process_pdf(uploaded_file):
 
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     vectordb = FAISS.from_documents(documents, embeddings)
-    return vectordb.as_retriever(search_type="similarity", k=4)
+    return vectordb.as_retriever(search_type="similarity", k=2)  # Reduced to avoid token overflow
 
 # ========== Retrieval Chain ==========
 if uploaded_file:
@@ -73,7 +74,7 @@ if uploaded_file:
 
     if query:
         with st.spinner("🤖 Thinking..."):
-            answer = qa_chain.run(query)
+            answer = qa_chain.invoke(query)
             st.session_state.chat.append({"question": query, "answer": answer})
 
     # ========== Display Chat History ==========
