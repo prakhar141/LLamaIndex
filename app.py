@@ -5,8 +5,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from langchain.chains import RetrievalQA
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+import tempfile
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="🎓 Quillify", page_icon="🤖", layout="wide")
@@ -18,25 +18,28 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 st.markdown("<div class='big-title'>🎓 Quillify</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Ask anything about BITS – syllabus, events, academics, policies, and more</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Upload a BITS PDF and ask questions about it</div>", unsafe_allow_html=True)
 
-# ========== PDF Loading ==========
-def load_all_pdfs():
-    docs = []
+# ========== PDF Upload ==========
+uploaded_file = st.file_uploader("📄 Upload your BITS PDF", type=["pdf"])
+
+# ========== PDF Processing ==========
+def process_pdf(file):
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
-    for file in os.listdir():
-        if file.endswith(".pdf"):
-            with fitz.open(file) as doc:
-                full_text = "\n".join([page.get_text() for page in doc])
-            chunks = splitter.split_text(full_text)
-            docs.extend([Document(page_content=chunk, metadata={"source": file}) for chunk in chunks])
-    return docs
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(file.read())
+        tmp_path = tmp.name
+    with fitz.open(tmp_path) as doc:
+        full_text = "\n".join([page.get_text() for page in doc])
+    chunks = splitter.split_text(full_text)
+    return [Document(page_content=chunk) for chunk in chunks]
 
-@st.cache_resource(show_spinner="📚 Indexing PDFs...")
-def setup_vector_db():
-    documents = load_all_pdfs()
+# ========== Load Embeddings & Build Vector DB ==========
+@st.cache_resource(show_spinner="📚 Indexing PDF...")
+def build_vector_db_from_uploaded_pdf(file):
+    docs = process_pdf(file)
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-    vectordb = FAISS.from_documents(documents, embeddings)
+    vectordb = FAISS.from_documents(docs, embeddings)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
 # ========== Load LaMini-Flan Model ==========
@@ -46,45 +49,38 @@ def load_lamini_pipeline():
     model = AutoModelForSeq2SeqLM.from_pretrained("MBZUAI/LaMini-Flan-T5-783M")
     return pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=300)
 
-# ========== Retrieval + LLM Chain ==========
-retriever = setup_vector_db()
-lamini_pipe = load_lamini_pipeline()
+# ========== Chat System ==========
+if uploaded_file:
+    retriever = build_vector_db_from_uploaded_pdf(uploaded_file)
+    lamini_pipe = load_lamini_pipeline()
 
-def get_answer(query):
-    context_docs = retriever.get_relevant_documents(query)
-    context_text = "\n\n".join([doc.page_content for doc in context_docs])
-    prompt = f"Answer the following question based on the context:\n\nContext:\n{context_text}\n\nQuestion: {query}"
-    result = lamini_pipe(prompt)
-    return result[0]["generated_text"]
+    def get_answer(query):
+        context_docs = retriever.get_relevant_documents(query)
+        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+        prompt = f"Answer the following question based on the context:\n\nContext:\n{context_text}\n\nQuestion: {query}"
+        result = lamini_pipe(prompt)
+        return result[0]["generated_text"]
 
-# ========== User Tracking ==========
-user_id = st.user.get("email", "anonymous_user")
-if "user_log" not in st.session_state:
-    st.session_state.user_log = set()
-if user_id not in st.session_state.user_log:
-    st.session_state.user_log.add(user_id)
-    st.info(f"👋 New user session started: `{user_id}`")
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
 
-# ========== Chat Interface ==========
-if "chat" not in st.session_state:
-    st.session_state.chat = []
+    query = st.chat_input("💬 Ask me anything about this PDF...")
 
-query = st.chat_input("💬 Ask me anything about BITS...")
+    if query:
+        with st.spinner("🤖 Thinking..."):
+            try:
+                answer = get_answer(query)
+            except Exception as e:
+                answer = f"❌ Error: {str(e)}"
+            st.session_state.chat.append({"question": query, "answer": answer})
 
-if query:
-    with st.spinner("🤖 Thinking..."):
-        try:
-            answer = get_answer(query)
-        except Exception as e:
-            answer = f"❌ Error: {str(e)}"
-        st.session_state.chat.append({"question": query, "answer": answer})
-
-# ========== Chat History ==========
-for entry in reversed(st.session_state.chat):
-    with st.chat_message("user"):
-        st.markdown(entry["question"])
-    with st.chat_message("assistant"):
-        st.markdown(entry["answer"])
+    for entry in reversed(st.session_state.chat):
+        with st.chat_message("user"):
+            st.markdown(entry["question"])
+        with st.chat_message("assistant"):
+            st.markdown(entry["answer"])
+else:
+    st.warning("📥 Please upload a PDF to begin.")
 
 # ========== Footer ==========
 st.markdown("""
