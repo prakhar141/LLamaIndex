@@ -21,10 +21,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 st.markdown("<div class='big-title'>🎓 Quillify</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Upload a BITS PDF and ask questions about it</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Upload a  PDF and ask questions about it</div>", unsafe_allow_html=True)
 
 # ========== PDF Upload ==========
-uploaded_file = st.file_uploader("📄 Upload your BITS PDF", type=["pdf"])
+uploaded_file = st.file_uploader("📄 Upload your  PDF", type=["pdf"])
 
 # ========== PDF Processing ==========
 def process_pdf(file):
@@ -38,7 +38,7 @@ def process_pdf(file):
     return [Document(page_content=chunk) for chunk in chunks]
 
 # ========== Build Vector DB ==========
-@st.cache_resource(show_spinner="📚 Indexing PDF...")
+@st.cache_resource(show_spinner="📚 Indexing...")
 def build_vector_db_from_uploaded_pdf(file):
     docs = process_pdf(file)
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
@@ -46,7 +46,7 @@ def build_vector_db_from_uploaded_pdf(file):
     return vectordb.as_retriever(search_type="similarity", k=4)
 
 # ========== Gemini Chat ==========
-@st.cache_resource(show_spinner="🤖 Loading Gemini...")
+@st.cache_resource(show_spinner="🤖 Loading ...")
 def load_gemini_model():
     return genai.GenerativeModel("gemini-1.5-flash")
 
