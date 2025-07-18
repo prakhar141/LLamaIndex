@@ -1,12 +1,15 @@
 import os
 import fitz  # PyMuPDF
 import streamlit as st
+import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 import tempfile
+
+# ======= Gemini API Key Setup =======
+genai.configure(api_key=os.getenv("GEMINI_API_KEY") or "YOUR_GEMINI_API_KEY")
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="🎓 Quillify", page_icon="🤖", layout="wide")
@@ -34,7 +37,7 @@ def process_pdf(file):
     chunks = splitter.split_text(full_text)
     return [Document(page_content=chunk) for chunk in chunks]
 
-# ========== Load Embeddings & Build Vector DB ==========
+# ========== Build Vector DB ==========
 @st.cache_resource(show_spinner="📚 Indexing PDF...")
 def build_vector_db_from_uploaded_pdf(file):
     docs = process_pdf(file)
@@ -42,24 +45,22 @@ def build_vector_db_from_uploaded_pdf(file):
     vectordb = FAISS.from_documents(docs, embeddings)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== Load LaMini-Flan Model ==========
-@st.cache_resource(show_spinner="🤖 Loading LaMini-Flan LLM...")
-def load_lamini_pipeline():
-    tokenizer = AutoTokenizer.from_pretrained("MBZUAI/LaMini-Flan-T5-783M")
-    model = AutoModelForSeq2SeqLM.from_pretrained("MBZUAI/LaMini-Flan-T5-783M")
-    return pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=300)
+# ========== Gemini Chat ==========
+@st.cache_resource(show_spinner="🤖 Loading Gemini...")
+def load_gemini_model():
+    return genai.GenerativeModel("gemini-1.5-flash")
 
 # ========== Chat System ==========
 if uploaded_file:
     retriever = build_vector_db_from_uploaded_pdf(uploaded_file)
-    lamini_pipe = load_lamini_pipeline()
+    gemini = load_gemini_model()
 
     def get_answer(query):
         context_docs = retriever.get_relevant_documents(query)
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
-        prompt = f"Answer the following question based on the context:\n\nContext:\n{context_text}\n\nQuestion: {query}"
-        result = lamini_pipe(prompt)
-        return result[0]["generated_text"]
+        prompt = f"""Answer the following question based on the given context.\n\nContext:\n{context_text}\n\nQuestion: {query}"""
+        response = gemini.generate_content(prompt)
+        return response.text
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
