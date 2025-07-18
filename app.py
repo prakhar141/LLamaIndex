@@ -1,41 +1,14 @@
-import streamlit as st
+import os
 import fitz  # PyMuPDF
+import streamlit as st
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
-from langchain.llms.base import LLM
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-from typing import Optional, List, ClassVar
-import torch
-from pydantic import PrivateAttr
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 
-
-# ========== Custom LaMini-Flan LLM Wrapper with Token Safety ==========
-class LaMiniFlanLLM(LLM):
-    model_id: ClassVar[str] = "MBZUAI/LaMini-Flan-T5-783M"
-
-    _tokenizer: any = PrivateAttr()
-    _model: any = PrivateAttr()
-
-    def __init__(self):
-        super().__init__()
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-        self._model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id)
-
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        # Token-safe input
-        inputs = self._tokenizer(prompt, truncation=True, max_length=512, return_tensors="pt")
-        with torch.no_grad():
-            outputs = self._model.generate(**inputs, max_new_tokens=256)
-        return self._tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    @property
-    def _llm_type(self) -> str:
-        return "lamini-flan-t5"
-
-# ========== Streamlit UI Setup ==========
+# ========== UI Setup ==========
 st.set_page_config(page_title="🎓 Quillify", page_icon="🤖", layout="wide")
 st.markdown("""
     <style>
@@ -45,49 +18,73 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 st.markdown("<div class='big-title'>🎓 Quillify</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Upload a PDF and ask questions about it!</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Ask anything about BITS – syllabus, events, academics, policies, and more</div>", unsafe_allow_html=True)
 
-# ========== File Upload ==========
-uploaded_file = st.file_uploader("📄 Upload your PDF", type="pdf")
-
-# ========== Process Uploaded PDF ==========
-@st.cache_resource(show_spinner="📚 Reading PDF...")
-def process_pdf(uploaded_file):
-    if uploaded_file is None:
-        return None
-
-    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-    text = "\n".join([page.get_text() for page in doc])
+# ========== PDF Loading ==========
+def load_all_pdfs():
+    docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
-    chunks = splitter.split_text(text)
-    documents = [Document(page_content=chunk, metadata={"source": uploaded_file.name}) for chunk in chunks]
+    for file in os.listdir():
+        if file.endswith(".pdf"):
+            with fitz.open(file) as doc:
+                full_text = "\n".join([page.get_text() for page in doc])
+            chunks = splitter.split_text(full_text)
+            docs.extend([Document(page_content=chunk, metadata={"source": file}) for chunk in chunks])
+    return docs
 
+@st.cache_resource(show_spinner="📚 Indexing PDFs...")
+def setup_vector_db():
+    documents = load_all_pdfs()
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     vectordb = FAISS.from_documents(documents, embeddings)
-    return vectordb.as_retriever(search_type="similarity", k=2)  # Reduced to avoid token overflow
+    return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== Retrieval Chain ==========
-if uploaded_file:
-    retriever = process_pdf(uploaded_file)
-    llm = LaMiniFlanLLM()
-    qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+# ========== Load LaMini-Flan Model ==========
+@st.cache_resource(show_spinner="🤖 Loading LaMini-Flan LLM...")
+def load_lamini_pipeline():
+    tokenizer = AutoTokenizer.from_pretrained("MBZUAI/LaMini-Flan-T5-783M")
+    model = AutoModelForSeq2SeqLM.from_pretrained("MBZUAI/LaMini-Flan-T5-783M")
+    return pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=300)
 
-    if "chat" not in st.session_state:
-        st.session_state.chat = []
+# ========== Retrieval + LLM Chain ==========
+retriever = setup_vector_db()
+lamini_pipe = load_lamini_pipeline()
 
-    query = st.chat_input("💬 Ask a question about your uploaded PDF")
+def get_answer(query):
+    context_docs = retriever.get_relevant_documents(query)
+    context_text = "\n\n".join([doc.page_content for doc in context_docs])
+    prompt = f"Answer the following question based on the context:\n\nContext:\n{context_text}\n\nQuestion: {query}"
+    result = lamini_pipe(prompt)
+    return result[0]["generated_text"]
 
-    if query:
-        with st.spinner("🤖 Thinking..."):
-            answer = qa_chain.invoke(query)
-            st.session_state.chat.append({"question": query, "answer": answer})
+# ========== User Tracking ==========
+user_id = st.user.get("email", "anonymous_user")
+if "user_log" not in st.session_state:
+    st.session_state.user_log = set()
+if user_id not in st.session_state.user_log:
+    st.session_state.user_log.add(user_id)
+    st.info(f"👋 New user session started: `{user_id}`")
 
-    # ========== Display Chat History ==========
-    for entry in reversed(st.session_state.chat):
-        with st.chat_message("user"):
-            st.markdown(entry["question"])
-        with st.chat_message("assistant"):
-            st.markdown(entry["answer"])
+# ========== Chat Interface ==========
+if "chat" not in st.session_state:
+    st.session_state.chat = []
+
+query = st.chat_input("💬 Ask me anything about BITS...")
+
+if query:
+    with st.spinner("🤖 Thinking..."):
+        try:
+            answer = get_answer(query)
+        except Exception as e:
+            answer = f"❌ Error: {str(e)}"
+        st.session_state.chat.append({"question": query, "answer": answer})
+
+# ========== Chat History ==========
+for entry in reversed(st.session_state.chat):
+    with st.chat_message("user"):
+        st.markdown(entry["question"])
+    with st.chat_message("assistant"):
+        st.markdown(entry["answer"])
 
 # ========== Footer ==========
 st.markdown("""
