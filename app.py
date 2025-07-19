@@ -15,7 +15,7 @@ MODEL_NAME = "deepseek/deepseek-chat"  # ✅ Free model
 # ========== UI ==========
 st.set_page_config(page_title="📄 Quiliffy", layout="wide")
 st.title("📘 Chat with your PDF using DeepSeek")
-st.markdown("Upload a PDF and chat with it using `deepseek/deepseek-chat` (via OpenRouter).")
+st.markdown("Upload a PDF and chat with it ")
 
 # ========== PDF Upload ==========
 uploaded_file = st.file_uploader("📄 Upload your PDF", type=["pdf"])
