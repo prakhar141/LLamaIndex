@@ -1,18 +1,15 @@
 import os
 import fitz  # PyMuPDF
 import streamlit as st
-from openai import OpenAI
+import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 import tempfile
 
-# ======= OpenAI (ChatAnywhere) API Setup =======
-client = OpenAI(
-    api_key="YOUR_API_KEY",  # 🔁 Replace with your ChatAnywhere API key
-    base_url="https://api.chatanywhere.tech/v1"
-)
+# ======= Gemini API Setup =======
+genai.configure(api_key=os.getenv("GEMINI_API_KEY") or "YOUR_GEMINI_API_KEY")  # Replace with your key if needed
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="🎓 Quillify", layout="wide")
@@ -41,37 +38,29 @@ def process_pdf(file):
     return [Document(page_content=chunk) for chunk in chunks]
 
 # ========== Build Vector DB ==========
-@st.cache_resource(show_spinner="Reading PDF...")
+@st.cache_resource(show_spinner="📚 Reading PDF...")
 def build_vector_db_from_uploaded_pdf(file):
     docs = process_pdf(file)
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     vectordb = FAISS.from_documents(docs, embeddings)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== OpenAI Chat ==========
-@st.cache_resource(show_spinner=" Loading LLM...")
-def load_openai_client():
-    return client
+# ========== Gemini Model Loader ==========
+@st.cache_resource(show_spinner=" Loading and Thinking...")
+def load_gemini_model():
+    return genai.GenerativeModel("gemini-1.5-flash")
 
 # ========== Chat System ==========
 if uploaded_file:
     retriever = build_vector_db_from_uploaded_pdf(uploaded_file)
-    openai_client = load_openai_client()
+    gemini = load_gemini_model()
 
     def get_answer(query):
         context_docs = retriever.get_relevant_documents(query)
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
-        system_prompt = f"You are an AI assistant. Use the following context to answer user questions.\n\nContext:\n{context_text}"
-
-        response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",  # or "gpt-4"
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
-            temperature=0.7
-        )
-        return response.choices[0].message.content
+        prompt = f"""You are an intelligent assistant. Use the context below to answer the question.\n\nContext:\n{context_text}\n\nQuestion:\n{query}"""
+        response = gemini.generate_content(prompt)
+        return response.text
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
@@ -79,7 +68,7 @@ if uploaded_file:
     query = st.chat_input("💬 Ask me anything about this PDF...")
 
     if query:
-        with st.spinner(" Thinking..."):
+        with st.spinner("🤖 Thinking..."):
             try:
                 answer = get_answer(query)
             except Exception as e:
