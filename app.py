@@ -1,93 +1,90 @@
 import os
 import fitz  # PyMuPDF
 import streamlit as st
-import google.generativeai as genai
+import requests
+import tempfile
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-import tempfile
 
-# ======= Gemini API Setup =======
-genai.configure(api_key=os.getenv("GEMINI_API_KEY") or "YOUR_GEMINI_API_KEY")  # Replace with your key if needed
+# ========== API Setup ==========
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
+MODEL_NAME = "deepseek/deepseek-chat"  # ✅ Free model
 
-# ========== UI Setup ==========
-st.set_page_config(page_title="🎓 Quillify", layout="wide")
-st.markdown("""
-    <style>
-        .big-title { font-size: 36px; font-weight: 800; margin-bottom: 10px; color: #3B82F6; }
-        .subtitle { font-size: 16px; color: gray; margin-top: -10px; }
-        .stTextInput > div > div > input { font-size: 18px; }
-    </style>
-""", unsafe_allow_html=True)
-st.markdown("<div class='big-title'>🎓 Quillify</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Upload a PDF and ask questions about it</div>", unsafe_allow_html=True)
+# ========== UI ==========
+st.set_page_config(page_title="📄 Quiliffy", layout="wide")
+st.title("📘 Chat with your PDF using DeepSeek")
+st.markdown("Upload a PDF and chat with it using `deepseek/deepseek-chat` (via OpenRouter).")
 
 # ========== PDF Upload ==========
 uploaded_file = st.file_uploader("📄 Upload your PDF", type=["pdf"])
 
 # ========== PDF Processing ==========
 def process_pdf(file):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file.read())
         tmp_path = tmp.name
     with fitz.open(tmp_path) as doc:
-        full_text = "\n".join([page.get_text() for page in doc])
-    chunks = splitter.split_text(full_text)
+        text = "\n".join([page.get_text() for page in doc])
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
+    chunks = splitter.split_text(text)
     return [Document(page_content=chunk) for chunk in chunks]
 
-# ========== Build Vector DB ==========
-@st.cache_resource(show_spinner="📚 Reading PDF...")
-def build_vector_db_from_uploaded_pdf(file):
+@st.cache_resource(show_spinner="📚 Processing PDF...")
+def build_vector_db(file):
     docs = process_pdf(file)
-    embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-    vectordb = FAISS.from_documents(docs, embeddings)
+    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    vectordb = FAISS.from_documents(docs, embedder)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== Gemini Model Loader ==========
-@st.cache_resource(show_spinner=" Loading and Thinking...")
-def load_gemini_model():
-    return genai.GenerativeModel("gemini-1.5-flash")
+# ========== Chat Function ==========
+def ask_deepseek(context, query):
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://chat.openai.com",  # update with your site if hosted
+        "X-Title": "PDF Chatbot via DeepSeek"
+    }
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer questions."},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
+    ]
+    payload = {"model": MODEL_NAME, "messages": messages}
+    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+    return response.json()["choices"][0]["message"]["content"]
 
-# ========== Chat System ==========
+# ========== Chat UI ==========
 if uploaded_file:
-    retriever = build_vector_db_from_uploaded_pdf(uploaded_file)
-    gemini = load_gemini_model()
-
-    def get_answer(query):
-        context_docs = retriever.get_relevant_documents(query)
-        context_text = "\n\n".join([doc.page_content for doc in context_docs])
-        prompt = f"""You are an intelligent assistant. Use the context below to answer the question.\n\nContext:\n{context_text}\n\nQuestion:\n{query}"""
-        response = gemini.generate_content(prompt)
-        return response.text
+    retriever = build_vector_db(uploaded_file)
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
 
-    query = st.chat_input("💬 Ask me anything about this PDF...")
+    query = st.chat_input("💬 Ask a question from the PDF")
 
     if query:
         with st.spinner("🤖 Thinking..."):
             try:
-                answer = get_answer(query)
+                docs = retriever.get_relevant_documents(query)
+                context = "\n\n".join([doc.page_content for doc in docs])
+                answer = ask_deepseek(context, query)
             except Exception as e:
                 answer = f"❌ Error: {str(e)}"
             st.session_state.chat.append({"question": query, "answer": answer})
 
-    for entry in reversed(st.session_state.chat):
+    for chat in reversed(st.session_state.chat):
         with st.chat_message("user"):
-            st.markdown(entry["question"])
+            st.markdown(chat["question"])
         with st.chat_message("assistant"):
-            st.markdown(entry["answer"])
+            st.markdown(chat["answer"])
 else:
-    st.warning("📥 Please upload a PDF to begin.")
+    st.info("📥 Please upload a PDF to begin chatting.")
 
 # ========== Footer ==========
 st.markdown("""
-    <hr style="margin-top: 40px; margin-bottom: 10px;">
-    <div style='text-align: center; color: #aaa; font-size: 14px;'>
-         Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani ·
-        <br>📬 Feedback or queries? Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
-    </div>
+<hr style="margin-top: 40px;">
+<div style='text-align: center; color: #888; font-size: 14px;'>
+    Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani · 
+    <br>📬 Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
+</div>
 """, unsafe_allow_html=True)
