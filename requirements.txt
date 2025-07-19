@@ -12,3 +12,4 @@ google-generativeai
 PyMuPDF
 streamlit
 langchain-google-genai
+openai
