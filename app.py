@@ -14,7 +14,7 @@ MODEL_NAME = "deepseek/deepseek-chat"  # ✅ Free model
 
 # ========== UI ==========
 st.set_page_config(page_title="📄 Quiliffy", layout="wide")
-st.title("📘 Chat with your PDF using DeepSeek")
+st.title("📘 Chat with your PDF")
 st.markdown("Upload a PDF and chat with it ")
 
 # ========== PDF Upload ==========
