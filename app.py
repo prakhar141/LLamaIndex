@@ -1,18 +1,21 @@
 import os
 import fitz  # PyMuPDF
 import streamlit as st
-import google.generativeai as genai
+from openai import OpenAI
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 import tempfile
 
-# ======= Gemini API Key Setup =======
-genai.configure(api_key=os.getenv("GEMINI_API_KEY") or "YOUR_GEMINI_API_KEY")
+# ======= OpenAI (ChatAnywhere) API Setup =======
+client = OpenAI(
+    api_key="YOUR_API_KEY",  # 🔁 Replace with your ChatAnywhere API key
+    base_url="https://api.chatanywhere.tech/v1"
+)
 
 # ========== UI Setup ==========
-st.set_page_config(page_title="🎓 Quillify", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="🎓 Quillify", layout="wide")
 st.markdown("""
     <style>
         .big-title { font-size: 36px; font-weight: 800; margin-bottom: 10px; color: #3B82F6; }
@@ -21,10 +24,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 st.markdown("<div class='big-title'>🎓 Quillify</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Upload a  PDF and ask questions about it</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Upload a PDF and ask questions about it</div>", unsafe_allow_html=True)
 
 # ========== PDF Upload ==========
-uploaded_file = st.file_uploader("📄 Upload your  PDF", type=["pdf"])
+uploaded_file = st.file_uploader("📄 Upload your PDF", type=["pdf"])
 
 # ========== PDF Processing ==========
 def process_pdf(file):
@@ -38,29 +41,37 @@ def process_pdf(file):
     return [Document(page_content=chunk) for chunk in chunks]
 
 # ========== Build Vector DB ==========
-@st.cache_resource(show_spinner="📚 Indexing...")
+@st.cache_resource(show_spinner="Reading PDF...")
 def build_vector_db_from_uploaded_pdf(file):
     docs = process_pdf(file)
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     vectordb = FAISS.from_documents(docs, embeddings)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== Gemini Chat ==========
-@st.cache_resource(show_spinner="🤖 Loading ...")
-def load_gemini_model():
-    return genai.GenerativeModel("gemini-1.5-flash")
+# ========== OpenAI Chat ==========
+@st.cache_resource(show_spinner=" Loading LLM...")
+def load_openai_client():
+    return client
 
 # ========== Chat System ==========
 if uploaded_file:
     retriever = build_vector_db_from_uploaded_pdf(uploaded_file)
-    gemini = load_gemini_model()
+    openai_client = load_openai_client()
 
     def get_answer(query):
         context_docs = retriever.get_relevant_documents(query)
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
-        prompt = f"""Answer the following question based on the given context.\n\nContext:\n{context_text}\n\nQuestion: {query}"""
-        response = gemini.generate_content(prompt)
-        return response.text
+        system_prompt = f"You are an AI assistant. Use the following context to answer user questions.\n\nContext:\n{context_text}"
+
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",  # or "gpt-4"
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
@@ -68,7 +79,7 @@ if uploaded_file:
     query = st.chat_input("💬 Ask me anything about this PDF...")
 
     if query:
-        with st.spinner("🤖 Thinking..."):
+        with st.spinner(" Thinking..."):
             try:
                 answer = get_answer(query)
             except Exception as e:
@@ -87,6 +98,7 @@ else:
 st.markdown("""
     <hr style="margin-top: 40px; margin-bottom: 10px;">
     <div style='text-align: center; color: #aaa; font-size: 14px;'>
-        🤖 Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani ·
+         Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani ·
+        <br>📬 Feedback or queries? Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
     </div>
 """, unsafe_allow_html=True)
