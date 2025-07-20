@@ -43,7 +43,7 @@ def ask_deepseek(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "HTTP-Referer": "https://chat.openai.com",  # update with your site if hosted
-        "X-Title": "PDF Chatbot via DeepSeek"
+        "X-Title": "PDF Chatbot"
     }
     messages = [
         {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer questions."},
