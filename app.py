@@ -27,7 +27,7 @@ uploaded_files = st.file_uploader("📄 Upload PDF(s)", type=["pdf"], accept_mul
 # ========== Reset Button ==========
 if st.button("🔁 Reset Session"):
     st.session_state.clear()
-    st.experimental_rerun()
+    st.rerun()
 
 # ========== PDF Processing ==========
 @st.cache_resource(show_spinner="📚 Indexing PDF(s)... Please wait.")
