@@ -10,7 +10,7 @@ from langchain.docstore.document import Document
 
 # ========== API Setup ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
-MODEL_NAME = "deepseek/deepseek-chat:free"
+MODEL_NAME = "deepseek/deepseek-chat-v3-0324:free"
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="📄 Quiliffy - Chat with PDFs", layout="wide")
