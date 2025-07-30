@@ -3,7 +3,6 @@ import fitz  # PyMuPDF
 import streamlit as st
 import requests
 import tempfile
-import pytesseract
 from PIL import Image
 from io import BytesIO
 import time
@@ -13,11 +12,6 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-
-# ========== Environment Setup ==========
-# Set Tesseract path for Streamlit deployment
-if os.name == "posix" and not os.path.exists("/usr/bin/tesseract"):
-    pytesseract.pytesseract.tesseract_cmd = "/usr/share/tesseract-ocr/4.00/tessdata"
 
 # ========== API Setup ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY", "YOUR_API_KEY")
@@ -39,37 +33,52 @@ if st.button("🔁 Reset Session"):
     st.session_state.clear()
     st.rerun()
 
+# ========== OCR API Helper ==========
+def extract_text_with_online_ocr(image: Image.Image):
+    api_key = "helloworld"  # Public free key from ocr.space
+    buffered = BytesIO()
+    image.save(buffered, format="PNG")
+    b64_image = base64.b64encode(buffered.getvalue()).decode()
+
+    url = "https://api.ocr.space/parse/image"
+    payload = {
+        "base64Image": f"data:image/png;base64,{b64_image}",
+        "language": "eng",
+        "isOverlayRequired": False
+    }
+    headers = {"apikey": api_key}
+
+    try:
+        response = requests.post(url, data=payload, headers=headers)
+        result = response.json()
+        return result["ParsedResults"][0]["ParsedText"]
+    except Exception as e:
+        st.error(f"🔴 OCR API Error: {str(e)}")
+        return ""
+
 # ========== Enhanced OCR with Progress ==========
 def extract_text_with_ocr(pdf_path):
-    """Extract text from scanned PDFs using OCR with progress tracking"""
     full_text = ""
     try:
         with fitz.open(pdf_path) as doc:
             total_pages = len(doc)
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
+
             for page_num in range(total_pages):
                 page = doc.load_page(page_num)
                 pix = page.get_pixmap(dpi=300)
-                img_bytes = pix.tobytes("png")
-                image = Image.open(BytesIO(img_bytes))
-                
-                # Preprocess image for better OCR
-                image = image.convert('L')  # Convert to grayscale
-                
-                text = pytesseract.image_to_string(image)
+                image = Image.open(BytesIO(pix.tobytes("png"))).convert("L")
+                text = extract_text_with_online_ocr(image)
                 full_text += f"{text}\n\n"
-                
-                # Update progress
                 progress = int((page_num + 1) / total_pages * 100)
                 progress_bar.progress(progress)
                 status_text.text(f"📖 Processing page {page_num+1}/{total_pages}...")
-                time.sleep(0.01)  # Allow UI update
-            
+                time.sleep(0.01)
+
             progress_bar.empty()
             status_text.empty()
-            
+
     except Exception as e:
         st.error(f"❌ OCR Error: {str(e)}")
     return full_text
@@ -81,21 +90,19 @@ def build_vector_db(uploaded_files):
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
     for file in uploaded_files:
-        with st.expander(f"🗂️ Processing: `{file.name}`", expanded=False):
+        with st.expander(f"📂 Processing: `{file.name}`", expanded=False):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                 tmp.write(file.getbuffer())
                 tmp_path = tmp.name
 
             try:
-                # First attempt: Extract normal text
                 with fitz.open(tmp_path) as doc:
                     text = "\n".join([page.get_text() for page in doc])
-                
-                # Check if text extraction failed (scanned PDF)
-                if len(text.strip()) < 50:  # Threshold for considering empty
-                    st.warning("⚠️ Low text count detected - using OCR for scanned PDF")
+
+                if len(text.strip()) < 50:
+                    st.warning("⚠️ Low text detected - switching to OCR...")
                     text = extract_text_with_ocr(tmp_path)
-                    
+
                     if not text.strip():
                         st.error("❌ OCR failed to extract text")
                         continue
@@ -103,11 +110,11 @@ def build_vector_db(uploaded_files):
                         st.success(f"✅ Extracted {len(text.split())} words via OCR")
                 else:
                     st.success(f"✅ Extracted {len(text.split())} words")
-                
+
                 chunks = splitter.split_text(text)
                 docs = [Document(page_content=chunk, metadata={"source": file.name}) for chunk in chunks]
                 all_docs.extend(docs)
-                
+
             except Exception as e:
                 st.error(f"❌ Processing failed: {str(e)}")
                 continue
@@ -115,7 +122,7 @@ def build_vector_db(uploaded_files):
                 os.unlink(tmp_path)
 
     if not all_docs:
-        st.error("🚫 No extractable content found in uploaded PDFs")
+        st.error("🛑 No extractable content found in uploaded PDFs")
         return None
 
     try:
@@ -147,7 +154,7 @@ def ask_deepseek(context, query):
         }
     ]
     payload = {"model": MODEL_NAME, "messages": messages}
-    
+
     try:
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -175,11 +182,13 @@ if uploaded_files:
         with st.spinner("🔍 Searching documents..."):
             try:
                 docs = retriever.get_relevant_documents(query)
-                context = "\n\n".join([f"Source: {doc.metadata['source']}\nContent: {doc.page_content}" for doc in docs])
-                
-                with st.spinner("🤖 Generating response..."):
+                context = "\n\n".join([
+                    f"Source: {doc.metadata['source']}\nContent: {doc.page_content}" for doc in docs
+                ])
+
+                with st.spinner("🧠 Generating response..."):
                     answer = ask_deepseek(context, query)
-                
+
                 st.session_state.chat.append({
                     "question": query,
                     "answer": answer,
@@ -203,7 +212,7 @@ if uploaded_files:
             st.markdown(f"**A{i+1}:** {chat['answer']}")
             st.markdown("---")
 else:
-    st.info("📥 Please upload at least one PDF to begin chatting.")
+    st.info("📅 Please upload at least one PDF to begin chatting.")
 
 # ========== Footer ==========
 st.markdown("""
