@@ -1,3 +1,4 @@
+python-dotenv
 pytesseract
 streamlit
 langchain
