@@ -3,6 +3,10 @@ import fitz  # PyMuPDF
 import streamlit as st
 import requests
 import tempfile
+from pdf2image import convert_from_path
+from PIL import Image
+import pytesseract
+
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -14,7 +18,6 @@ MODEL_NAME = "deepseek/deepseek-chat-v3-0324:free"
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="📄 Quiliffy - Chat with PDFs", layout="wide")
-
 st.title("📘 Welcome to Quiliffy")
 st.markdown("""
 Quiliffy lets you **chat with your PDFs**.  
@@ -28,6 +31,17 @@ uploaded_files = st.file_uploader("📄 Upload PDF(s)", type=["pdf"], accept_mul
 if st.button("🔁 Reset Session"):
     st.session_state.clear()
     st.rerun()
+
+# ========== OCR Helper ==========
+def extract_text_with_ocr(pdf_path):
+    text = ""
+    try:
+        images = convert_from_path(pdf_path)
+        for img in images:
+            text += pytesseract.image_to_string(img)
+    except Exception as e:
+        text = f"OCR error: {str(e)}"
+    return text
 
 # ========== PDF Processing ==========
 @st.cache_resource(show_spinner="📚 Indexing PDF(s)... Please wait.")
@@ -46,7 +60,16 @@ def build_vector_db(uploaded_files):
 
         with fitz.open(tmp_path) as doc:
             text = "\n".join([page.get_text() for page in doc])
-            st.markdown(f"✅ Loaded `{file.name}` with **{len(doc)} pages**.")
+            if not text.strip():
+                st.warning(f"⚠️ `{file.name}` appears scanned. Applying OCR…")
+                text = extract_text_with_ocr(tmp_path)
+            else:
+                st.success(f"✅ Loaded `{file.name}` with **{len(doc)} pages**.")
+
+        if not text.strip():
+            st.error(f"❌ Could not extract text from `{file.name}`.")
+            continue
+
         chunks = splitter.split_text(text)
         docs = [Document(page_content=chunk, metadata={"source": file.name}) for chunk in chunks]
         all_docs.extend(docs)
