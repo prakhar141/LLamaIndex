@@ -3,8 +3,9 @@ import fitz  # PyMuPDF
 import streamlit as st
 import requests
 import tempfile
-from pdf2image import convert_from_path
+import subprocess
 from PIL import Image
+from pdf2image import convert_from_path
 import pytesseract
 
 from langchain_community.vectorstores import FAISS
@@ -27,58 +28,85 @@ Upload one or more PDF files, and ask anything related to their content! 💬
 # ========== File Upload ==========
 uploaded_files = st.file_uploader("📄 Upload PDF(s)", type=["pdf"], accept_multiple_files=True)
 
-# ========== Reset Button ==========
+# ========== Reset ==========
 if st.button("🔁 Reset Session"):
     st.session_state.clear()
     st.rerun()
 
-# ========== OCR Helper ==========
+# ========== Utility: Check Poppler ==========
+def check_poppler_installed():
+    try:
+        subprocess.run(["pdftoppm", "-h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except FileNotFoundError:
+        return False
+
+# ========== OCR for Scanned PDFs ==========
 def extract_text_with_ocr(pdf_path):
+    if not check_poppler_installed():
+        st.error("❌ Poppler is not installed. OCR cannot run.")
+        st.info("""
+### How to install Poppler:
+- 🐧 Ubuntu/Debian: `sudo apt install poppler-utils`
+- 🍎 macOS: `brew install poppler`
+- 🪟 Windows: [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows/releases)
+→ Add the `bin/` folder to your System PATH.
+        """)
+        return ""
+
     text = ""
     try:
         images = convert_from_path(pdf_path)
         for img in images:
-            text += pytesseract.image_to_string(img)
+            ocr_text = pytesseract.image_to_string(img)
+            text += ocr_text + "\n"
     except Exception as e:
-        text = f"OCR error: {str(e)}"
+        st.error(f"🧨 OCR failed: {e}")
     return text
 
-# ========== PDF Processing ==========
+# ========== PDF Processor ==========
 @st.cache_resource(show_spinner="📚 Indexing PDF(s)... Please wait.")
 def build_vector_db(uploaded_files):
     all_docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
     for file in uploaded_files:
-        file_details = f"🗂️ `{file.name}` ({round(len(file.read()) / 1024, 2)} KB)"
-        st.markdown(file_details)
+        st.markdown(f"🗂️ `{file.name}`")
         file.seek(0)
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file.read())
             tmp_path = tmp.name
 
+        # Try direct text extraction
         with fitz.open(tmp_path) as doc:
             text = "\n".join([page.get_text() for page in doc])
-            if not text.strip():
-                st.warning(f"⚠️ `{file.name}` appears scanned. Applying OCR…")
-                text = extract_text_with_ocr(tmp_path)
-            else:
-                st.success(f"✅ Loaded `{file.name}` with **{len(doc)} pages**.")
+
+        # If no text, fall back to OCR
+        if not text.strip():
+            st.warning(f"⚠️ `{file.name}` looks scanned. Running OCR…")
+            text = extract_text_with_ocr(tmp_path)
+        else:
+            st.success(f"✅ Extracted text from `{file.name}` ({len(doc)} pages).")
 
         if not text.strip():
-            st.error(f"❌ Could not extract text from `{file.name}`.")
+            st.error(f"❌ Couldn't extract text from `{file.name}`. Skipping.")
             continue
 
+        # Split into chunks and store
         chunks = splitter.split_text(text)
         docs = [Document(page_content=chunk, metadata={"source": file.name}) for chunk in chunks]
         all_docs.extend(docs)
+
+    if not all_docs:
+        st.error("🚫 No valid content found in uploaded PDFs.")
+        return None
 
     embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     vectordb = FAISS.from_documents(all_docs, embedder)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== Chat Function ==========
+# ========== LLM Query ==========
 def ask_deepseek(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -92,14 +120,16 @@ def ask_deepseek(context, query):
     payload = {"model": MODEL_NAME, "messages": messages}
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"❌ API Error: {str(e)}"
 
-# ========== Main Chat Flow ==========
+# ========== Main Chat ==========
 if uploaded_files:
     retriever = build_vector_db(uploaded_files)
+
+    if not retriever:
+        st.stop()
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
@@ -120,7 +150,6 @@ if uploaded_files:
                 "sources": [doc.metadata["source"] for doc in docs]
             })
 
-    # ========== Chat Display ==========
     for chat in reversed(st.session_state.chat):
         with st.chat_message("user"):
             st.markdown(chat["question"])
@@ -129,7 +158,6 @@ if uploaded_files:
             for src in set(chat["sources"]):
                 st.caption(f"📄 Source: `{src}`")
 
-    # ========== Expandable Chat History ==========
     with st.expander("🕘 View Chat History"):
         for i, chat in enumerate(st.session_state.chat):
             st.markdown(f"**Q{i+1}:** {chat['question']}")
