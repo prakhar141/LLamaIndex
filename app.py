@@ -3,10 +3,6 @@ import fitz  # PyMuPDF
 import streamlit as st
 import requests
 import tempfile
-import pytesseract
-from PIL import Image
-from io import BytesIO
-
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -18,6 +14,7 @@ MODEL_NAME = "deepseek/deepseek-chat-v3-0324:free"
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="📄 Quiliffy - Chat with PDFs", layout="wide")
+
 st.title("📘 Welcome to Quiliffy")
 st.markdown("""
 Quiliffy lets you **chat with your PDFs**.  
@@ -32,21 +29,6 @@ if st.button("🔁 Reset Session"):
     st.session_state.clear()
     st.rerun()
 
-# ========== OCR from PyMuPDF Page Images ==========
-def extract_text_with_ocr_mupdf(pdf_path):
-    text = ""
-    try:
-        with fitz.open(pdf_path) as doc:
-            for page in doc:
-                pix = page.get_pixmap(dpi=300)  # render high-res image
-                img_bytes = pix.tobytes("png")
-                image = Image.open(BytesIO(img_bytes))
-                ocr_text = pytesseract.image_to_string(image)
-                text += ocr_text + "\n"
-    except Exception as e:
-        st.error(f"❌ OCR failed: {str(e)}")
-    return text
-
 # ========== PDF Processing ==========
 @st.cache_resource(show_spinner="📚 Indexing PDF(s)... Please wait.")
 def build_vector_db(uploaded_files):
@@ -54,35 +36,20 @@ def build_vector_db(uploaded_files):
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
     for file in uploaded_files:
-        st.markdown(f"🗂️ `{file.name}`")
+        file_details = f"🗂️ `{file.name}` ({round(len(file.read()) / 1024, 2)} KB)"
+        st.markdown(file_details)
         file.seek(0)
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file.read())
             tmp_path = tmp.name
 
-        # Try text extraction
         with fitz.open(tmp_path) as doc:
             text = "\n".join([page.get_text() for page in doc])
-
-        # Fallback to OCR if empty
-        if not text.strip():
-            st.warning(f"⚠️ `{file.name}` appears scanned. Extracting text using OCR...")
-            text = extract_text_with_ocr_mupdf(tmp_path)
-        else:
-            st.success(f"✅ `{file.name}` loaded successfully ({doc.page_count} pages).")
-
-        if not text.strip():
-            st.error(f"❌ No text could be extracted from `{file.name}`. Skipping.")
-            continue
-
+            st.markdown(f"✅ Loaded `{file.name}` with **{len(doc)} pages**.")
         chunks = splitter.split_text(text)
         docs = [Document(page_content=chunk, metadata={"source": file.name}) for chunk in chunks]
         all_docs.extend(docs)
-
-    if not all_docs:
-        st.error("🚫 No extractable content found in uploaded PDFs.")
-        return None
 
     embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     vectordb = FAISS.from_documents(all_docs, embedder)
@@ -102,16 +69,14 @@ def ask_deepseek(context, query):
     payload = {"model": MODEL_NAME, "messages": messages}
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        return response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as e:
         return f"❌ API Error: {str(e)}"
 
 # ========== Main Chat Flow ==========
 if uploaded_files:
     retriever = build_vector_db(uploaded_files)
-
-    if not retriever:
-        st.stop()
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
@@ -132,6 +97,7 @@ if uploaded_files:
                 "sources": [doc.metadata["source"] for doc in docs]
             })
 
+    # ========== Chat Display ==========
     for chat in reversed(st.session_state.chat):
         with st.chat_message("user"):
             st.markdown(chat["question"])
@@ -140,6 +106,7 @@ if uploaded_files:
             for src in set(chat["sources"]):
                 st.caption(f"📄 Source: `{src}`")
 
+    # ========== Expandable Chat History ==========
     with st.expander("🕘 View Chat History"):
         for i, chat in enumerate(st.session_state.chat):
             st.markdown(f"**Q{i+1}:** {chat['question']}")
