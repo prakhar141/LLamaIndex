@@ -13,3 +13,7 @@ PyMuPDF
 streamlit
 langchain-google-genai
 openai
+pytesseract
+pdf2image
+Pillow
+poppler-utils
